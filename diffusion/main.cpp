@@ -2,10 +2,12 @@
 
 #include "util/PathsAndFiles.hpp"
 
-#include "level_set/redistancing_Sussman/AnalyticalSDF.hpp" // Analytical SDF to define the disk-shaped domain
+#include "level_set/redistancing_Sussman/AnalyticalSDF.hpp" // Analytical SDF to define the disk-shaped diffusion domain
 #include "level_set/redistancing_Sussman/HelpFunctionsForGrid.hpp"
 
-#include "FiniteDifference/Upwind_gradient.hpp"
+#include "../include/FD_laplacian.hpp"
+#include "../include/Gaussian.hpp"
+#include "../include/timesteps_stability.hpp"
 
 
 // Grid dimensions
@@ -16,18 +18,20 @@ constexpr size_t x = 0, y = 1;
 
 // Property indices
 constexpr size_t
-		PHI_N                = 0, // level-set function Phi
-		PHI_NPLUS1           = 1, // level-set function Phi of next timepoint
-		V_SIGN               = 2, // sign of velocity, needed for the upwinding
-		PHI_GRAD             = 3, // gradient of phi (vector field)
-		PHI_GRAD_MAGNITUDE   = 4; // Eucledian norm of gradient (scalar field)
+PHI_SDF                = 0,
+CONC_N                 = 1,
+CONC_NPLUS1            = 2,
+CONC_LAP               = 3,
+DIFFUSION_COEFFICIENT  = 4,
+K_SOURCE               = 5,
+K_SINK                 = 6;
 
-typedef aggregate<double, double, int, double[dims], double> props;
+typedef aggregate<double, double, double, double, double, double, double> props;
 
 
 
-// Parameters for the growth process
-const double v = 0.1; // velocity
+// Parameters for the diffusion process
+const double D = 0.1; // diffusion constant
 
 
 int main(int argc, char* argv[])
@@ -39,7 +43,7 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Set current working directory, define output paths and create folders where output will be saved
 	std::string cwd                     = get_cwd();
-	const std::string path_output       = cwd + "/output_level_set/";
+	const std::string path_output       = cwd + "/output_diffusion/";
 	create_directory_if_not_exist(path_output);
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -54,67 +58,121 @@ int main(int argc, char* argv[])
 	Ghost<dims, long int> ghost(1);
 	typedef grid_dist_id<dims, double, props > grid_type;
 	grid_type g_dist(sz, box, ghost);
-	g_dist.setPropNames({"PHI_N", "PHI_NPLUS1", "V_SIGN", "PHI_GRAD", "PHI_GRAD_MAGNITUDE"});
+	g_dist.setPropNames({"PHI_SDF", "CONC_N", "CONC_NPLUS1", "CONC_LAP", "DIFFUSION_COEFFICIENT", "K_SOURCE",
+						 "K_SINK"});
 	const double center[dims] = {0.5*(box_upper+box_lower), 0.5*(box_upper+box_lower)};
 	
-	init_grid_and_ghost<V_SIGN>(g_dist, 1); // Initialize grid and ghost layer with 1
-	init_grid_and_ghost<PHI_N>(g_dist, -1); // Initialize grid and ghost layer with -1
-	init_grid_and_ghost<PHI_NPLUS1>(g_dist, -1); // Initialize grid and ghost layer with -1
+	
+	init_grid_and_ghost<CONC_N>(g_dist, 0); // Initialize grid and ghost layer with 0
+	init_grid_and_ghost<CONC_NPLUS1>(g_dist, 0); // Initialize grid and ghost layer with 0
+	init_grid_and_ghost<PHI_SDF>(g_dist, -1); // Initialize grid and ghost layer with -1
 	
 	// Initialize level-set function with analytic signed distance function at each grid point
-	init_analytic_sdf_circle<PHI_N>(g_dist, radius, center[x], center[y]);
+	init_analytic_sdf_circle<PHI_SDF>(g_dist, radius, center[x], center[y]);
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Get timestep that fulfills the CFL condition
+	// For the gaussian shaped initial concentration
+	double mu [dims]    = {box_upper/2.0, box_upper/2.0};
+	double sigma [dims] = {box_upper/10.0, box_upper/10.0}; 
+	
+	// Initialize grid with initial concentration and diffusion coefficient
+	auto dom = g_dist.getDomainIterator();
+	while(dom.isNext()) // Loop over all grid points
+	{
+		auto key = dom.get(); // index of current grid node
+		
+		Point<grid_type::dims, typename grid_type::stype> coords = g_dist.getPos(key); // get coordinates of grid point
+		
+		g_dist.template get<CONC_N>(key)                = gaussian(coords, mu, sigma); // optional. alternatively set
+		// to 0 and get initial concentration by adding the source term
+		g_dist.template get<DIFFUSION_COEFFICIENT>(key) = D;
+		
+		++dom;
+	}
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Initialize source and sink term
+	double k_source = 1.0;
+	double k_sink   = 0.1;
+	
+	auto dom2 = g_dist.getDomainIterator();
+	while(dom2.isNext()) // Loop over all grid points
+	{
+		auto key = dom2.get(); // index of current grid node
+		
+		// Here, change if-condition accordingly to where you would like to have the source
+		if(g_dist.template get<PHI_SDF>(key) > radius / 2.0)
+		{
+			g_dist.template get<K_SOURCE>(key) = k_source;
+		}
+		else
+		{
+			g_dist.template get<K_SOURCE>(key) = 0;
+		}
+		
+		// Here, change if-condition accordingly to where you would like to have the sink
+		if(g_dist.template get<PHI_SDF>(key) < radius / 2.0)
+		{
+			g_dist.template get<K_SINK>(key) = k_sink;
+		}
+		else
+		{
+			g_dist.template get<K_SINK>(key) = 0;
+		}
+		
+		++dom2;
+	}
+	
+	g_dist.write(path_output + "grid_initial", FORMAT_BINARY); // Save initial grid
+	
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Get the diffusion timestep that fulfills the stability condition
 	const double dx = g_dist.spacing(x), dy = g_dist.spacing(y); // if you want to know the grid spacing
-	const double dt = get_time_step_CFL(g_dist, v, 0.1);
+	const double dt = get_diffusion_time_step(g_dist, D);
 	std::cout << "dx = " << dx << ", dy = " << dy << ", dt = " << dt << std::endl;
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Get the upwind gradient of Phi in order to get the surface normals
-	get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
-	
-	g_dist.write(path_output + "grid_initial", FORMAT_BINARY); // Save initial grid
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Now evolve level-set using forward-time and upwinding for the gradient
+	// Diffusion using a forward-time central-space scheme
 	double t = 0;
 	int iter = 0; // initial iteraton
-	int max_iter = 1e2; // max iteration --> be careful, that the box is large enough to contain the growing disk!
+	int max_iter = 1e4; // max iteration
 	int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
 	while(iter < max_iter)
 	{
-		// Compute upwind gradient of phi for whole grid
-		get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); // the upwind gradient is automatically
-		// one-sided at the boundary
-		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
-		// Loop over grid and simulate growth using the surface normals (= magnitude gradient of phi) computed above
+		// Compute laplacian of concentration for whole grid
+		get_laplacian_grid<CONC_N, CONC_LAP>(g_dist);
+		
+		// Loop over grid and run (reaction-)diffusion using the concentration laplacian computed above
+		// THERE ARE NO BOUNDARY CONDITIONS FOR THE DIFFUSION DOMAIN YET
 		// This just runs over the whole box so far
-		auto dom = g_dist.getDomainIterator();
-		while(dom.isNext())
+		auto dom3 = g_dist.getDomainIterator();
+		while(dom3.isNext())
 		{
-			auto key = dom.get();
+			auto key = dom3.get();
 			
-			g_dist.template get<PHI_NPLUS1>(key) =
-			        g_dist.template get<PHI_N>(key) + dt * v * g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
+			// This is simple diffusion so far. For source and sink, you can add respective reaction terms
+			g_dist.template get<CONC_NPLUS1>(key) =
+			        g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key);
 			
-			++dom;
+			++dom3;
 		}
 		
 		
 		// Write grid to vtk
 		if (iter % interval_write == 0)
 		{
-			g_dist.write_frame(path_output + "/grid_growth", iter, FORMAT_BINARY);
-			std::cout << "Time :" << t << std::endl;
+			g_dist.write_frame(path_output + "/grid_diffuse", iter, FORMAT_BINARY);
+			std::cout << "Diffusion time :" << t << std::endl;
 		}
 		
-		// Update PHI_N
-		copy_gridTogrid<PHI_NPLUS1, PHI_N>(g_dist, g_dist);
+		// Update CONC_N
+		copy_gridTogrid<CONC_NPLUS1, CONC_N>(g_dist, g_dist);
 		
 		
 		
@@ -122,20 +180,11 @@ int main(int argc, char* argv[])
 		t += dt;
 	}
 	
-	/**
-	 * 	 This is the simplest for of growth in normal direction
-	 * 	 After some steps of growth (especially if not in normal direction), the signed distance feature of the
-	 * 	 level-set function Phi will be distorted. Therefore, it has to be reinitialized from time to time. For this,
-	 * 	 we want to use Sussman redistancing, which is implemented in OpenFPM. Examples and explanation, how to use
-	 * 	 the Sussman redistancing, can be found here:
-	 * 	 http://ppmcore.mpi-cbg.de/doxygen/openfpm/example_sussman_disk.html
-	 *
-	 *   How do you know, when to reinitialize? Check after how many iterations the phi gradient magnitude is very
-	 *   different from 1.
-	 */
-
 	
 	
+	
+	g_dist.save(path_output + "/grid_diffuse_" + std::to_string(iter) + ".hdf5"); // Save grid as hdf5 file which can
+	// be reloaded for evaluation
 	
 	
 	
