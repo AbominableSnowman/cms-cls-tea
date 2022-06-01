@@ -1,3 +1,0 @@
-/home/jarryd/project/testProject/build/CMakeFiles/myProject.dir
-/home/jarryd/project/testProject/build/CMakeFiles/edit_cache.dir
-/home/jarryd/project/testProject/build/CMakeFiles/rebuild_cache.dir
