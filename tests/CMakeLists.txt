@@ -27,17 +27,17 @@ link_directories(/home/jarryd/project/openfpm_install_master/openfpm_devices/lib
 
 
 add_executable(
-                myProject
+                tests
                 main.cpp
 )
 
 # Supress warning
-target_compile_options(myProject PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -Wno-macro-redefined >)
+target_compile_options(tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>: -Wno-macro-redefined >)
 
 # Link against MPI
-target_link_libraries(myProject ${MPI_LIBRARIES} vcluster ofpm_pdata ofpmmemory parmetis metis boost_iostreams boost_program_options hdf5 libhilbert Vc dl boost_filesystem boost_system boost_filesystem boost_system)
+target_link_libraries(tests ${MPI_LIBRARIES} vcluster ofpm_pdata ofpmmemory parmetis metis boost_iostreams boost_program_options hdf5 libhilbert Vc dl boost_filesystem boost_system boost_filesystem boost_system)
 
-target_include_directories(myProject PUBLIC /. 
+target_include_directories(tests PUBLIC /.
                         /home/jarryd/project/openfpm_install_master/openfpm_numerics/include 
                         /home/jarryd/project/openfpm_install_master/openfpm_pdata/include/config 
                         /home/jarryd/project/openfpm_install_master/openfpm_pdata/include 
@@ -64,6 +64,6 @@ if(MPI_COMPILE_FLAGS)
                         COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
 endif()
 if(MPI_LINK_FLAGS)
-        set_target_properties(myProject PROPERTIES
+        set_target_properties(tests PROPERTIES
                         LINK_FLAGS "${MPI_LINK_FLAGS}")
 endif()
