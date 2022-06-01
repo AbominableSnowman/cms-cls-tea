@@ -1,6 +1,6 @@
 #include <iostream>
-
 #include "util/PathsAndFiles.hpp"
+
 
 #include "level_set/redistancing_Sussman/AnalyticalSDF.hpp" // Analytical SDF to define the disk-shaped diffusion domain
 #include "level_set/redistancing_Sussman/HelpFunctionsForGrid.hpp"
@@ -8,6 +8,17 @@
 #include "../include/FD_laplacian.hpp"
 #include "../include/Gaussian.hpp"
 #include "../include/timesteps_stability.hpp"
+
+/*
+#include "/home/jarryd/project/openfpm_install_master/openfpm_io/include/util/PathsAndFiles.hpp"
+#include "/home/jarryd/project/openfpm_install_master/openfpm_numerics/include/level_set/redistancing_Sussman/level_set/redistancing_Sussman/AnalyticalSDF.hpp" // Analytical SDF to define the disk-shaped diffusion domain
+
+
+#include "/home/jarryd/project/openfpm_install_master/openfpm_numerics/include/level_set/redistancing_Sussman/HelpFunctionsForGrid.hpp"
+
+#include "../include/FD_laplacian.hpp"
+#include "../include/Gaussian.hpp"
+#include "../include/timesteps_stability.hpp"*/
 
 
 // Grid dimensions

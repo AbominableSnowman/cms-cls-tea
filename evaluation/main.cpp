@@ -28,8 +28,7 @@ constexpr size_t
 typedef aggregate<double, double, double, double, double, double, double> props;
 
 const std::string path_to_diffusion_result =
-		"/Users/jstark/Desktop/Students/TeamProject/clion_code_frameworks/diffusion/cmake-build-release"
-		"/output_diffusion/";
+		"/home/jarryd/project/cms-cls-tea/diffusion/output_diffusion/";
 
 // Parameters for the diffusion process
 const double D = 0.1; // diffusion constant
