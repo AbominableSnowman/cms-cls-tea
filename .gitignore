@@ -1,3 +1,6 @@
+
+
+# Outputs
 *.vtk
 *.o.
 *.hdf5
@@ -10,8 +13,13 @@
 .DS_store
 .idea/
 
+# visual studio
+.vs
+
+# cmake
 **/CMake*
 cmake-build*
+Makefile
 projectId.sh
 **/CMakeFiles
 **/.ipynb_checkpoints
