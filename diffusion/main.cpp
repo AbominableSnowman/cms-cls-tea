@@ -136,11 +136,11 @@ int main(int argc, char* argv[])
 		
         if (g_dist.template getProp<PHI_SDF>(key) >= b_low - std::numeric_limits<phi_type>::epsilon()) {
             // Here, change if-condition accordingly to where you would like to have the source
-            if(g_dist.template get<PHI_SDF>(key) < 0.15*phi_max && x < x_max){
+            if(g_dist.template get<PHI_SDF>(key) < 0.15*phi_max && y < y_max){
                 g_dist.template get<K_SOURCE>(key) = k_source;
                 g_dist.template get<K_SINK>(key) = 0;
             }
-            else if (g_dist.template get<PHI_SDF>(key) < 0.15*phi_max && x > x_max) {
+            else if (g_dist.template get<PHI_SDF>(key) < 0.15*phi_max && y > y_max) {
                 g_dist.template get<K_SOURCE>(key) = 0;
                 g_dist.template get<K_SINK>(key) = k_sink;
             }
