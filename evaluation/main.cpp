@@ -1,4 +1,6 @@
 #include <iostream>
+#include <string>
+#include <filesystem>
 
 #include "util/PathsAndFiles.hpp"
 
@@ -7,6 +9,9 @@
 #include "level_set/redistancing_Sussman/HelpFunctionsForGrid.hpp"
 
 #include "../include/get_concentration_profile.hpp"
+
+// For finding files to be analyzed
+namespace fs = std::filesystem;
 
 // Grid dimensions
 const size_t dims = 2;
@@ -70,6 +75,7 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Load diffusion result
 	// You can run the diffusion code in the diffusion folder and adapt the input path above accordingly
+	/*
 	g_dist.load(path_to_diffusion_result + "grid_diffuse_9900.hdf5");
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -96,6 +102,7 @@ int main(int argc, char* argv[])
 
 	// CAREFUL: When running same script several times without changing the path_output name, the values will just be
 	// appended to the already existing csv file! So either change the name or delete csv file before running again
+	
 	get_1D_profile_from_2D<CONC_N>(g_dist,
 	                               N,
 	                               x_start,
@@ -104,10 +111,14 @@ int main(int argc, char* argv[])
 								   1.0,
 	                               v_distance_from_margin,
 	                               v_conc_slice);
+								   
 	
 	
-	reduction_and_write_vectors_to_csv(v_distance_from_margin, v_conc_slice, path_output, "conc_versus_x.csv");
+    
 	
+	
+		reduction_and_write_vectors_to_csv(v_distance_from_margin, v_conc_slice, path_output, "conc_versus_x.csv");
+	*/
 	/**
 	 * This will produce a csv file with
 	 * column 1: y-coordinate (= distance from y_margin)
@@ -119,6 +130,49 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	
+	
+	// Jarryd's edit to process all hdf5 files
+	for (const auto & entry : fs::directory_iterator(path_to_diffusion_result)){
+		const std::string file_name = entry.path();
+        //std::cout << file_name.substr(file_name.size() - 4) << std::endl;
+		
+		if (file_name.substr(file_name.size() - 4) == "hdf5"){
+			//std::cout << file_name.substr(file_name.size() - 4) << std::endl;
+			
+			g_dist.load(file_name);
+	
+			////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			// Get 1D concentration profile by summing substance over rays along the x-axis
+			openfpm::vector<float> v_conc_slice;
+			v_conc_slice.resize(N);
+			openfpm::vector<float> v_distance_from_margin;
+			v_distance_from_margin.resize(N);
+			int x_start    = 0;
+			int x_stop     = (int) N;
+			const double y_margin = 0;
+			
+			get_1D_profile_from_2D<CONC_N>(g_dist,
+										   N,
+										   x_start,
+										   x_stop,
+										   y_margin,
+										   1.0,
+										   v_distance_from_margin,
+										   v_conc_slice);
+									   
+			const std::string file_name_out = file_name.substr(path_to_diffusion_result.size(), file_name.size() - path_to_diffusion_result.size() - 5);
+			std::cout << file_name_out << std::endl;
+			reduction_and_write_vectors_to_csv(v_distance_from_margin, 
+											   v_conc_slice, 
+											   path_output, 
+											   file_name_out + "_conc_versus_x.csv");
+		}
+	}
+	
+	
 	openfpm_finalize();
 	return 0;
 }
