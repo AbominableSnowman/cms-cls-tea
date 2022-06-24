@@ -215,8 +215,7 @@ int main(int argc, char* argv[])
 				}
 				
 				// Differential equationss
-            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key);
-																						 + v[0] * dt * advectionTerm;
+            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key) + dt * advectionTerm;
 			}
 			
  
