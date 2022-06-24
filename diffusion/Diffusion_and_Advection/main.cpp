@@ -21,17 +21,18 @@ const size_t dims = 2;
 constexpr size_t x = 0, y = 1;
 
 // speed and diffusion parameters
-const double v = 1.75; 
+const double velocity = 1.75;
+const double v[dims] = {velocity, velocity};
 const double D = 0.3;
 const double k_source = 1;
 const double k_sink   = 1;
 
 // Property indices
 constexpr size_t PHI_N = 0, PHI_NPLUS1 = 1, V_SIGN = 2, PHI_GRAD = 3, PHI_GRAD_MAGNITUDE = 4,
-CONC_N = 5, CONC_NPLUS1 = 6, CONC_LAP = 7, K_SOURCE = 8, K_SINK = 9;
+CONC_N = 5, CONC_NPLUS1 = 6, CONC_LAP = 7, K_SOURCE = 8, K_SINK = 9, CONC_N_GRAD = 10;
 
 typedef aggregate<double, double, int, double[dims], double,
-double, double, double, double, double> props;
+double, double, double, double, double, double[dims]> props;
 
 
 double b_low = 0;
@@ -44,8 +45,8 @@ int main(int argc, char* argv[])
 	auto & v_cl = create_vcluster();
 	
 	// Set current working directory, define output paths and create folders where output will be saved
-	std::string cwd                     = get_cwd();
-	const std::string path_output       = cwd + "/output_diffusion/";
+	std::string cwd = get_cwd();
+	const std::string path_output = cwd + "/output_diffusion/";
 	create_directory_if_not_exist(path_output);
 	
 
@@ -64,7 +65,7 @@ int main(int argc, char* argv[])
 
 	// Assigning names for readability
 	g_dist.setPropNames({"PHI_N", "PHI_NPLUS1", "V_SIGN", "PHI_GRAD", "PHI_GRAD_MAGNITUDE",
-	"CONC_N", "CONC_NPLUS1", "CONC_LAP", "K_SOURCE", "K_SINK"});
+	"CONC_N", "CONC_NPLUS1", "CONC_LAP", "K_SOURCE", "K_SINK", "CONC_N_GRAD"});
 	
 	// initializing grid per property with a value
 	init_grid_and_ghost<CONC_N>(g_dist, 0);
@@ -81,7 +82,7 @@ int main(int argc, char* argv[])
 
     // stability condition
 	auto const dt_diffusion = get_diffusion_time_step(g_dist, D);
-	const double dt_advection = get_advection_time_step_cfl(g_dist, v, 0.1);
+	const double dt_advection = get_advection_time_step_cfl(g_dist, v[0], 0.1);
 	auto dt = std::min(dt_advection, dt_diffusion);
 
 	std::cout << "diffusion timestep is: " << dt_diffusion << std::endl;
@@ -107,7 +108,8 @@ int main(int argc, char* argv[])
 	// setting up the system for solving
 	//////////////////////////////////////////////////////////////
 	get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
-	
+	get_upwind_gradient<CONC_N, V_SIGN, CONC_N_GRAD>(g_dist, 1, true);
+
 	double t = 0;
 	int iter = 0; 
 	int max_iter = 1e2;
@@ -116,6 +118,17 @@ int main(int argc, char* argv[])
 
 	while(iter < max_iter)
 	{
+
+		auto dom7 = g_dist.getDomainIterator();
+		while (dom7.isNext()) {
+			auto key = dom7.get();
+			if (g_dist.template getProp<PHI_N>(key) <= b_low - std::numeric_limits<phi_type>::epsilon())
+			{
+				g_dist.template get<CONC_N>(key) = 0;				
+			}
+			++dom7;
+		}
+
 		// Compute upwind gradient of phi for whole grid and the vectors magnitudes
 		get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
 		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
@@ -124,12 +137,11 @@ int main(int argc, char* argv[])
 		auto key = dom2.get();
 
 		// get the magnitude of the phi gradient
-		auto phi_gra_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom2.get()); 
-		std::cout << "I'm here" << std::endl;
+		auto phi_gra_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom2.get());
 		std::cout << "phi_gra_mag:" << phi_gra_mag << std::endl;
 
 		// numerical correction 
-		if (phi_gra_mag > 1.02)
+		/*if (phi_gra_mag > 1.02)
 		{	
 			Redist_options<phi_type> redist_options;
     		redist_options.min_iter = 1e3;
@@ -153,13 +165,13 @@ int main(int argc, char* argv[])
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 			auto phi_gra_mag_2 = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom2.get()); 
 			std::cout << "phi_gra_mag_2:" << phi_gra_mag_2 << std::endl;
-		} 
+		}*/
 
 		// Solving the DE for the SDF 
 		while(dom2.isNext())
 		{
 			auto key = dom2.get();
-			g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v * g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
+			g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v[0] * g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
 			++dom2;
 		}
 
@@ -180,6 +192,7 @@ int main(int argc, char* argv[])
 			}
 			++dom3;
 		}
+		
 
 
 		// compute delta.C
@@ -198,18 +211,27 @@ int main(int argc, char* argv[])
 				// using CD for advection discretisation
 				for(size_t d = 0; d < dims; d++)
 				{
-					advectionTerm += g_dist.template get<CONC_N>(key.move(d, 1)) - g_dist.template get<CONC_N>(key.move(d, -1));
+					advectionTerm += g_dist.template get<CONC_N_GRAD>(key)[d] * v[d];
 				}
-				advectionTerm /= (2*g_dist.spacing(x));
-
-				// Differential equation
-            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key)
-																						 + v * dt * advectionTerm;
+				
+				// Differential equationss
+            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key);
+																						 + v[0] * dt * advectionTerm;
 			}
+			
  
             ++dom4;
         }
 		
+		auto dom8 = g_dist.getDomainIterator();
+        while (dom8.isNext()) {
+			auto key = dom8.get();
+			if (g_dist.template getProp<PHI_N>(key) <= b_low - std::numeric_limits<phi_type>::epsilon())
+			{
+				g_dist.template get<CONC_N>(key) = 0;				
+			}
+			++dom8;
+		}
 
 		// Write grid to vtk
 		if (iter % interval_write == 0)
