@@ -155,7 +155,6 @@ int main(int argc, char* argv[])
 
 
 	g_dist.write(path_output + "grid_initial", FORMAT_BINARY); // Save initial grid
-	g_dist.save(path_output + "/grid_diffuse_init.hdf5");
 
     
 	
@@ -224,8 +223,7 @@ int main(int argc, char* argv[])
 		if (iter % interval_write == 0)
 		{
 			g_dist.write_frame(path_output + "/grid_diffuse_withNoFlux", iter, FORMAT_BINARY);
-			g_dist.save(path_output + "/grid_diffuse_" + std::to_string(iter) + ".hdf5"); // Save grid as hdf5 file which can
-			// be reloaded for evaluation
+			g_dist.save(path_output + "/grid_diffuse_" + std::to_string(iter) + ".hdf5"); // Save grid as hdf5 file which can be reloaded for evaluation
 			std::cout << "Diffusion time :" << t << std::endl;
 			
 			// Monitor mass to check conservation in case of no reaction
