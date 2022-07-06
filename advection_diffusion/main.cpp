@@ -18,20 +18,23 @@ int main(int argc, char* argv[])
 {
 	openfpm_init(&argc, &argv); // Initialize library.
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Define output locations, advection + diffusion on/off, & what to save
+	// Define output locations, advection, growth, diffusion on/off, & what to save
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	bool save_vtk = true;
 	bool save_hdf5 = false;
 	bool save_mass = false;
-	bool advection_on = false;
 	bool diffusion_on = true;
+	bool growth_on = false;
+	bool advection_on = true;
+	
+	// Output locations
 	std::string cwd = get_cwd();
 	const std::string path_output = cwd + "/output_advection_diffusion/";
 	create_directory_if_not_exist(path_output);
-	std::string save_path = path_output + "/";
-	if (advection_on && diffusion_on) {save_path += "advection_diffusion";}
-	else if (advection_on && !diffusion_on) {save_path += "advection";}
-	else if (diffusion_on && !advection_on) {save_path += "diffusion";}
+	std::string save_path = path_output + "/out";
+	if (diffusion_on){save_path += "_diff";}
+	if (growth_on){save_path += "_growth";}
+	if (advection_on){save_path += "_advec";}
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -40,7 +43,7 @@ int main(int argc, char* argv[])
 	// Temporal values
 	double t = 0;
 	int iter = 0; // initial iteraton
-	int max_iter = 1e2; // max iteration --> be careful, that the box is large enough to contain the growing disk!
+	int max_iter = 5e2; // max iteration --> be careful, that the box is large enough to contain the growing disk!
 	int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
 	
 	// Spatial values
@@ -57,7 +60,7 @@ int main(int argc, char* argv[])
 	const double D = 0.1; // diffusion constant
 	double k_source = 1;
 	double k_sink   = 1;
-    double b_low = 0; // considered as embryo boundary
+    double emb_boundary = 0; // domain boundary
 	double mu [dims]    = {box_upper/2.0, box_upper/2.0}; // For initial gaussian conc field
 	double sigma [dims] = {box_upper/10.0, box_upper/10.0}; // For initial gaussian conc field
     double x_max = 0;
@@ -65,14 +68,15 @@ int main(int argc, char* argv[])
     double phi_max = 0;
 	
 	// Advection values
-	const double v = 0.1; // velocity
+	//const double v = 0.1; // velocity
+	const double v[dims] = {0.1, 0.1};
 	
 	// Grid property indices		
 	constexpr size_t
 		CONC_N                 = 0,
 		CONC_NPLUS1            = 1,
 		CONC_LAP               = 2,
-		DIFFUSION_COEFFICIENT  = 3,
+		CONC_N_GRAD            = 3,
 		K_SOURCE               = 4,
 		K_SINK                 = 5,
 		PHI_N                  = 6,  // level-set function Phi
@@ -91,13 +95,13 @@ int main(int argc, char* argv[])
 	Box<dims, double> box({box_lower, box_lower}, {box_upper, box_upper});
 	Ghost<dims, long int> ghost(1);
 	typedef aggregate<double, double, double, 
-					  double, double, double, 
+					  double[dims], double, double, 
 					  double, double, int, 
 					  double[dims], double> props;
 	typedef grid_dist_id<dims, double, props > grid_type;
 	grid_type g_dist(sz, box, ghost);
 	g_dist.setPropNames({"CONC_N", "CONC_NPLUS1", "CONC_LAP", 
-						 "DIFFUSION_COEFFICIENT", "K_SOURCE", "K_SINK", 
+						 "CONC_N_GRAD", "K_SOURCE", "K_SINK", 
 						 "PHI_N", "PHI_NPLUS1", "V_SIGN", 
 						 "PHI_GRAD", "PHI_GRAD_MAGNITUDE"});
 	
@@ -116,14 +120,15 @@ int main(int argc, char* argv[])
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Initialize Concentration Field
+	// Initialize source, sink, & concentration field
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// find the biggest SDF value and its location
-	auto dom5 = g_dist.getDomainIterator();
-	while(dom5.isNext()) // Loop over all grid points
+	auto dom_phi_max = g_dist.getDomainIterator();
+	while(dom_phi_max.isNext()) // Loop over all grid points
 	{
-		auto key = dom5.get(); // index of current grid node
+		auto key = dom_phi_max.get(); // index of current grid node
 		if (g_dist.template get<PHI_N>(key) > phi_max){
+			auto phi_max_key = key;
             phi_max = g_dist.template get<PHI_N>(key);
 
             Point<grid_type::dims, typename grid_type::stype> coords = g_dist.getPos(key); 
@@ -134,9 +139,9 @@ int main(int argc, char* argv[])
             y_max = y;
         } 
             
-		++dom5;
+		++dom_phi_max;
 	}
-
+	
     std::cout << "x is: " << x_max << std::endl;
     std::cout << "y is: " << y_max << std::endl;
     std::cout << "phi is: " << phi_max << std::endl;
@@ -150,7 +155,7 @@ int main(int argc, char* argv[])
         // get coordinates of grid point
         auto x_coord = coords.get(0);
         auto y_coord = coords.get(1);
-        if (g_dist.template getProp<PHI_N>(key) >= b_low - std::numeric_limits<phi_type>::epsilon()) {
+        if (g_dist.template getProp<PHI_N>(key) >= emb_boundary - std::numeric_limits<phi_type>::epsilon()) {
             // Here, change if-condition accordingly to where you would like to have the source
             if(g_dist.template get<PHI_N>(key) < 0.15*phi_max && y_coord < y_max){
                 g_dist.template get<K_SOURCE>(key) = k_source;
@@ -171,7 +176,7 @@ int main(int argc, char* argv[])
 	const double dx = g_dist.spacing(x), dy = g_dist.spacing(y); // Get grid spacings
 	std::cout << "dx = " << dx << ", dy = " << dy << std::endl;
 	double p_volume  = dx * dy;
-	double m_initial = sum_prop_over_region<CONC_N, PHI_N>(g_dist, b_low) * p_volume; // Initial total mass
+	double m_initial = sum_prop_over_region<CONC_N, PHI_N>(g_dist, emb_boundary) * p_volume; // Initial total mass
 	std::cout << "m_initial : " << m_initial << std::endl;
 	if (m_initial == 0){m_initial = 0.01;} // is this needed?
 	// Save initial state
@@ -182,7 +187,8 @@ int main(int argc, char* argv[])
 	// Stability Conditions
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Advection stability condition
-	const double dt_adv = get_advection_time_step_cfl(g_dist, v, 0.1);
+	auto max_v = *std::max_element(std::begin(v), std::end(v));
+	const double dt_adv = get_advection_time_step_cfl(g_dist, max_v, 0.1);
 	std::cout << "dt (advection) = " << dt_adv << std::endl;
 	// Diffusion stability condition
 	const double dt_dif = get_diffusion_time_step(g_dist, D);
@@ -210,13 +216,13 @@ int main(int argc, char* argv[])
 			auto dom4 = g_dist.getDomainIterator();
 			while(dom4.isNext()) {
 				auto key = dom4.get();
-				if(g_dist.template getProp<PHI_N>(key) >= b_low - std::numeric_limits<phi_type>::epsilon()) {
+				if(g_dist.template getProp<PHI_N>(key) >= emb_boundary - std::numeric_limits<phi_type>::epsilon()) {
 					for(int d = 0; d < dims; ++d) {
-						if(g_dist.template get<PHI_N>(key.move(d, 1)) < b_low + std::numeric_limits<double>::epsilon()) {
+						if(g_dist.template get<PHI_N>(key.move(d, 1)) < emb_boundary + std::numeric_limits<double>::epsilon()) {
 							g_dist.template get<CONC_N>(key.move(d, 1)) = g_dist.template get<CONC_N>(key);
 						}
 						
-						if(g_dist.template get<PHI_N>(key.move(d, -1)) < b_low + std::numeric_limits<double>::epsilon()) {
+						if(g_dist.template get<PHI_N>(key.move(d, -1)) < emb_boundary + std::numeric_limits<double>::epsilon()) {
 							g_dist.template get<CONC_N>(key.move(d, -1)) = g_dist.template get<CONC_N>(key);
 						}
 					}
@@ -227,36 +233,53 @@ int main(int argc, char* argv[])
 			
 			// Compute laplacian of concentration for whole grid
 			get_laplacian_grid<CONC_N, CONC_LAP>(g_dist);
+			// Compute gradient of concentration for whole grid
+			get_upwind_gradient<CONC_N, V_SIGN, CONC_N_GRAD>(g_dist, 1, true);
 
-			// looping over gridpoints
+			// Update grid points by solving ODE 
 			auto dom3 = g_dist.getDomainIterator();
 			while (dom3.isNext()) {
 				auto key = dom3.get();
-
-				// diffusion only
-				// g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key);
-
-				// reaction-diffusion
-				// This is simple diffusion so far. For source and sink, you can add respective reaction terms
-				if (g_dist.template getProp<PHI_N>(key) >= b_low - std::numeric_limits<phi_type>::epsilon())
-				{
-					g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key) 
-					+ dt*g_dist.template get<K_SOURCE>(key) - dt*g_dist.template get<K_SINK>(key)*g_dist.template get<CONC_N>(key);            
+				auto phi_here = g_dist.template getProp<PHI_N>(key);
+				auto u = g_dist.template get<CONC_N>(key);
+				auto laplacian_u = g_dist.template get<CONC_LAP>(key);
+				auto epsilon_phi = std::numeric_limits<phi_type>::epsilon();
+				auto ksource_here = g_dist.template get<K_SOURCE>(key);
+				auto ksink_here = g_dist.template get<K_SINK>(key);
+				
+				
+				if (phi_here >= emb_boundary - epsilon_phi){
+					
+					if (diffusion_on && !advection_on){
+						g_dist.template get<CONC_NPLUS1>(key) = u
+																+ D*dt*laplacian_u
+																+ dt*ksource_here
+																- dt*ksink_here*u;            
+					}
+					else if (diffusion_on && advection_on){
+						auto del_u = g_dist.template get<CONC_N_GRAD>(key);
+						double v_advec = 0.;
+						for(size_t d = 0; d < dims; d++){v_advec += g_dist.template get<CONC_N_GRAD>(key)[d] * v[d];}
+						g_dist.template get<CONC_NPLUS1>(key) = u
+																+ D*dt*laplacian_u
+																+ dt*ksource_here
+																- dt*ksink_here*u
+																+ dt*v_advec;
+					}
 				}
-				
-				
 				++dom3;
 			}
 			// Update CONC_N
 			copy_gridTogrid<CONC_NPLUS1, CONC_N>(g_dist, g_dist);
 		} // End diffusion
 		
-		if (advection_on){
+		
+		
+		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		if (growth_on){
 			/** Advection: check condition of phi gradient. Count the number of points where PHI_GRAD > upper-bound 
 			tolerance OR PHI_GRAD < lower-bound tolerance and if # of points out of range > tolerance value, then run 
 			sussman redistancing to reinitialize phi.**/
-			
-			// ***Still need to incorporate the above***
 			
 			// Compute upwind gradient of phi for whole grid
 			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); // the upwind gradient is automatically
@@ -265,12 +288,18 @@ int main(int argc, char* argv[])
 			// Loop over grid and simulate growth using the surface normals (= magnitude gradient of phi) computed above
 			// This just runs over the whole box so far
 			
-			auto dom = g_dist.getDomainIterator();
-			auto key = dom.get();
-			auto phi_gra_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom.get()); //get the magnitude of the phi gradient 
-			std::cout << "phi_gra_mag:" << phi_gra_mag << std::endl;
-
-			if (phi_gra_mag > 1.02)
+			int phi_grad_tol_break = 0; // counts the # of grid points outside of tolerance range
+			auto phi_grad_dom = g_dist.getDomainIterator();
+			while (phi_grad_dom.isNext()){
+				auto key = phi_grad_dom.get();
+				auto phi_grad_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(key); //get the magnitude of the phi gradient
+				if (phi_grad_mag > 1.02 || phi_grad_mag < 0.98){
+					phi_grad_tol_break += 1;
+				}
+				++phi_grad_dom;
+			}
+			
+			if (phi_grad_tol_break > 4)
 			{	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
@@ -291,20 +320,30 @@ int main(int argc, char* argv[])
 				redist_obj.run_redistancing<PHI_N, PHI_N>(); //update phi_n using sussman redistancing
 				get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); //calculate new gradient and magnitude using new phi_n
 				get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
-				auto phi_gra_mag_2 = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom.get()); //get the magnitude of the phi gradient 
-				std::cout << "phi_gra_mag_2:" << phi_gra_mag_2 << std::endl;
+				//auto phi_gra_mag_2 = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom.get()); //get the magnitude of the phi gradient 
+				//std::cout << "phi_gra_mag_2:" << phi_gra_mag_2 << std::endl;
 			} 
 			
-			// Advection: Set PHI_NPLUS1 to PHI_N and update PHI_N
-			while(dom.isNext()) // looping over the grid points
+			// Set PHI_NPLUS1 to PHI_N and update PHI_N
+			auto phi_n_dom = g_dist.getDomainIterator();
+			while(phi_n_dom.isNext()) // looping over the grid points
 			{
-				auto key = dom.get();
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v * g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
-				++dom;
+				auto key = phi_n_dom.get();
+				
+				
+				// need Shivani to explain upwind gradient of phi and why it isn't a vector because I'm now using 
+				// a vector for velocity
+				
+				
+				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v[0] * g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
+				++phi_n_dom;
 			}
 			// Update PHI_N
 			copy_gridTogrid<PHI_NPLUS1, PHI_N>(g_dist, g_dist);
-		} // End advection
+			
+		} // End growth
+		
+		
 		
 		
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -314,7 +353,7 @@ int main(int argc, char* argv[])
 		if (iter % interval_write == 0){
 			if (save_vtk){g_dist.write_frame(save_path, iter, FORMAT_BINARY);}
 			if (save_hdf5){g_dist.save(save_path + std::to_string(iter) + ".hdf5");}
-			//if (save_mass){monitor_absolute_mass_over_region<CONC_N, PHI_N>(g_dist, b_low, m_initial, p_volume, t, iter, path_output, save_path + "mass.csv");}
+			//if (save_mass){monitor_absolute_mass_over_region<CONC_N, PHI_N>(g_dist, emb_boundary, m_initial, p_volume, t, iter, path_output, save_path + "mass.csv");}
 		}
 		std::cout << "Time :" << t << std::endl;
 		iter += 1;
