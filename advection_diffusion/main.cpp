@@ -22,7 +22,7 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	bool diffusion_on = true;
 	bool growth_on = true;
-	bool advection_on = false;
+	bool advection_on = true;
 	int source_sink_cond = 1; // 1-4 different testing scenarios for source & sink locations
 	/*	1: Source on bottom, sink on top
 		2: Sources and sinks covering the entire disk
@@ -36,7 +36,7 @@ int main(int argc, char* argv[])
 	std::string cwd = get_cwd();
 	const std::string path_output = cwd + "/output_advection_diffusion/";
 	create_directory_if_not_exist(path_output);
-	std::string save_path = path_output + "SrcSnk" + std::to_string(source_sink_cond) + "_";
+	std::string save_path = path_output + "SrcSnk" + std::to_string(source_sink_cond);
 	if (diffusion_on){save_path += "_diff";}
 	if (growth_on){save_path += "_growth";}
 	if (advection_on){save_path += "_advec";}
@@ -48,8 +48,8 @@ int main(int argc, char* argv[])
 	// Temporal values
 	double t = 0;
 	int iter = 0; // initial iteraton
-	int max_iter = 1e4; // max iteration --> be careful, that the box is large enough to contain the growing disk!
-	int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
+	int max_iter = 1e3; // max iteration --> be careful, that the box is large enough to contain the growing disk!
+	int interval_write = (int)(max_iter / 200); // set how many frames should be saved as vtk
 	
 	// Spatial values
 	const size_t dims = 2; // Grid dimensions
@@ -69,7 +69,7 @@ int main(int argc, char* argv[])
 	double sigma [dims] = {box_upper/10.0, box_upper/10.0}; // For initial gaussian conc field
 	
 	// Growth values
-	const double v[dims] = {0.1, 0.1};
+	const double v[dims] = {0.4, 0.4};
 	
 	// Grid property indices		
 	constexpr size_t
@@ -266,7 +266,6 @@ int main(int argc, char* argv[])
 		if (growth_on){
 			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
-			int phi_grad_tol_break = 0; // counts the # of grid points outside of tolerance range
 		}
 		if (diffusion_on){
 			get_laplacian_grid<CONC_N, CONC_LAP>(g_dist);
@@ -275,7 +274,7 @@ int main(int argc, char* argv[])
 		
 		// Grid maintenance: no-flux boundary, source/sink expansion, SDF distortion
 		auto dom4 = g_dist.getDomainIterator();
-		int phi_grad_tol_break = 0;
+		int phi_grad_tol_break = 0; // counts the # of grid points outside of tolerance range
 		while(dom4.isNext()) {
 			auto key = dom4.get();
 			auto phi_here = g_dist.template getProp<PHI_N>(key);
@@ -286,25 +285,29 @@ int main(int argc, char* argv[])
 						// Impose no-flux boundary
 						g_dist.template get<CONC_N>(key.move(d, 1)) = g_dist.template get<CONC_N>(key);
 						
-						// Expand sources / sinks
-						if (g_dist.template get<K_SOURCE>(key.move(d, 1)) == k_source){
-							g_dist.template get<K_SOURCE>(key) = k_source;
-						}
-						if (g_dist.template get<K_SINK>(key.move(d, 1)) == k_sink){
-							g_dist.template get<K_SINK>(key) = k_sink;
+						if (growth_on){
+							// Expand sources / sinks
+							if (g_dist.template get<K_SOURCE>(key) == k_source){
+								g_dist.template get<K_SOURCE>(key.move(d, 1)) = k_source;
+							}
+							if (g_dist.template get<K_SINK>(key) == k_sink){
+								g_dist.template get<K_SINK>(key.move(d, 1)) = k_sink;
+							}
 						}
 					}
 					if(g_dist.template get<PHI_N>(key.move(d, -1)) < emb_boundary + phi_epsilon) {
 						// Impose no-flux boundary
 						g_dist.template get<CONC_N>(key.move(d, -1)) = g_dist.template get<CONC_N>(key);
 						
-						// Expand sources / sinks
-						if (g_dist.template get<K_SOURCE>(key.move(d, -1)) == k_source){
-							g_dist.template get<K_SOURCE>(key) = k_source;
+						if (growth_on){
+							// Expand sources / sinks
+							if (g_dist.template get<K_SOURCE>(key) == k_source){
+								g_dist.template get<K_SOURCE>(key.move(d, -1)) = k_source;
+							}
+							if (g_dist.template get<K_SINK>(key) == k_sink){
+								g_dist.template get<K_SINK>(key.move(d, -1)) = k_sink;
+							}	
 						}
-						if (g_dist.template get<K_SINK>(key.move(d, -1)) == k_sink){
-							g_dist.template get<K_SINK>(key) = k_sink;
-						}	
 					}
 				}
 				////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -354,7 +357,7 @@ int main(int argc, char* argv[])
 		} // End diffusion
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (growth_on){
-			if (phi_grad_tol_break > 10) {	
+			if (phi_grad_tol_break > 50) {	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
 				redist_options.max_iter                             = 1e4;
@@ -377,7 +380,7 @@ int main(int argc, char* argv[])
 				// Calculate new gradient and magnitude using new phi_n
 				get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); 
 				get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
-			} 
+			}
 			
 			// Set PHI_NPLUS1 to PHI_N and update PHI_N
 			auto phi_n_dom = g_dist.getDomainIterator();
