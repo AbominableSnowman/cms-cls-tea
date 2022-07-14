@@ -23,7 +23,7 @@ constexpr size_t x = 0, y = 1;
 // speed and diffusion parameters
 const double velocity = 1.75;
 const double v[dims] = {velocity, velocity};
-const double D = 0.3;
+const double D = 0.9;
 const double k_source = 1;
 const double k_sink   = 1;
 
@@ -119,55 +119,62 @@ int main(int argc, char* argv[])
 	while(iter < max_iter)
 	{
 
+
+		// Compute upwind gradient of phi for whole grid
+		get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); // the upwind gradient is automatically
+		// one-sided at the boundary
+		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
+		// Loop over grid and simulate growth using the surface normals (= magnitude gradient of phi) computed above
+		// This just runs over the whole box so far
+		
+		auto dz = g_dist.getSpacing();
+		auto dx = dz.get(0);
+
+		size_t thickness_of_narrowBand_in_grid_points = 6;
+		
 		auto dom7 = g_dist.getDomainIterator();
-		while (dom7.isNext()) {
+		int counter = 0;
+		while(dom.isNext())
+		{
 			auto key = dom7.get();
-			if (g_dist.template getProp<PHI_N>(key) <= b_low - std::numeric_limits<phi_type>::epsilon())
+			auto phi_gra_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(key); //get the magnitude of the phi gradient 
+			if(abs(g_dist.template get<PHI_N>(key)) <= (thickness_of_narrowBand_in_grid_points/2*dx))
 			{
-				g_dist.template get<CONC_N>(key) = 0;				
+				std::cout << "phi_gra_mag:" << phi_gra_mag << std::endl;
+				if ((phi_gra_mag > 1.2 || phi_gra_mag < 0.8))
+				{
+					counter = counter +1;
+				}
 			}
 			++dom7;
 		}
 
-		// Compute upwind gradient of phi for whole grid and the vectors magnitudes
-		get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
-		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 
-		auto dom2 = g_dist.getDomainIterator();
-		auto key = dom2.get();
-
-		// get the magnitude of the phi gradient
-		auto phi_gra_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom2.get());
-		std::cout << "phi_gra_mag:" << phi_gra_mag << std::endl;
-
-		// numerical correction 
-		/*if (phi_gra_mag > 1.02)
+		if (counter > 20)
 		{	
 			Redist_options<phi_type> redist_options;
-    		redist_options.min_iter = 1e3;
-    		redist_options.max_iter = 1e4;
+    		redist_options.min_iter                             = 1e3;
+    		redist_options.max_iter                             = 1e4;
     
-    		redist_options.convTolChange.value = 1e-7;
-    		redist_options.convTolChange.check = true;
-    		redist_options.convTolResidual.value = 1e-6; // is ignored if convTolResidual.check = false;
-    		redist_options.convTolResidual.check = false;
+    		redist_options.convTolChange.value                  = 1e-7;
+    		redist_options.convTolChange.check                  = true;
+    		redist_options.convTolResidual.value                = 1e-6;
+    		redist_options.convTolResidual.check                = false;
     
-    		redist_options.interval_check_convergence = 1e3;
-    		redist_options.width_NB_in_grid_points = 10;
-    		redist_options.print_current_iterChangeResidual = true;
-    		redist_options.print_steadyState_iter = true;
-    		redist_options.save_temp_grid = true;
+    		redist_options.interval_check_convergence           = 1e3;
+    		redist_options.width_NB_in_grid_points              = 10;
+    		redist_options.print_current_iterChangeResidual     = true;
+    		redist_options.print_steadyState_iter               = true;
+    		redist_options.save_temp_grid                       = true;
 			
-			// Sussman-redistancing class
-			RedistancingSussman<grid_type, phi_type> redist_obj(g_dist, redist_options); 
+			RedistancingSussman<grid_type, phi_type> redist_obj(g_dist, redist_options);
 			redist_obj.run_redistancing<PHI_N, PHI_N>();
 			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
-			auto phi_gra_mag_2 = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom2.get()); 
-			std::cout << "phi_gra_mag_2:" << phi_gra_mag_2 << std::endl;
-		}*/
+		}
 
 		// Solving the DE for the SDF 
+		auto dom2 = g_dist.getDomainIterator();
 		while(dom2.isNext())
 		{
 			auto key = dom2.get();
@@ -194,7 +201,6 @@ int main(int argc, char* argv[])
 		}
 		
 
-
 		// compute delta.C
 		get_laplacian_grid<CONC_N, CONC_LAP>(g_dist);
 
@@ -202,20 +208,19 @@ int main(int argc, char* argv[])
         auto dom4 = g_dist.getDomainIterator();
         while (dom4.isNext()) {
             auto key = dom4.get();
+			double velocityVector[2];
+			for(size_t d = 0; d < dims; d++){velocityVector[d] = g_dist.template get<PHI_GRAD>(key)[d] * velocity;}
 
             // solve for what's inside the domain only
 			if (g_dist.template getProp<PHI_NPLUS1>(key) >= b_low - std::numeric_limits<phi_type>::epsilon())
 			{	
 				double advectionTerm = 0.;
-
 				// using CD for advection discretisation
-				for(size_t d = 0; d < dims; d++)
-				{
-					advectionTerm += g_dist.template get<CONC_N_GRAD>(key)[d] * v[d];
-				}
+				for(size_t d = 0; d < dims; d++){advectionTerm += g_dist.template get<CONC_N_GRAD>(key)[d] * velocityVector[d];}
 				
 				// Differential equationss
             	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key) + dt * advectionTerm;
+				// g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key);
 			}
 			
  
@@ -226,9 +231,7 @@ int main(int argc, char* argv[])
         while (dom8.isNext()) {
 			auto key = dom8.get();
 			if (g_dist.template getProp<PHI_N>(key) <= b_low - std::numeric_limits<phi_type>::epsilon())
-			{
-				g_dist.template get<CONC_N>(key) = 0;				
-			}
+			{g_dist.template get<CONC_N>(key) = 0;}
 			++dom8;
 		}
 
