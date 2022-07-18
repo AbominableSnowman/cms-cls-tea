@@ -2,12 +2,13 @@
 #include <algorithm>
 #include <string>
 
+// OpenFPM standard library
 #include "util/PathsAndFiles.hpp"
-#include "level_set/redistancing_Sussman/AnalyticalSDF.hpp" // Analytical SDF to define the disk-shaped domain
+#include "level_set/redistancing_Sussman/AnalyticalSDF.hpp"
 #include "level_set/redistancing_Sussman/HelpFunctionsForGrid.hpp"
-#include "level_set/redistancing_Sussman/RedistancingSussman.hpp" //for sussman redistancing
+#include "level_set/redistancing_Sussman/RedistancingSussman.hpp"
 #include "FiniteDifference/Upwind_gradient.hpp"
-
+// From Justina
 #include "../include/FD_laplacian.hpp"
 #include "../include/timesteps_stability.hpp"
 #include "../include/Gaussian.hpp"
@@ -23,8 +24,8 @@ int main(int argc, char* argv[])
 	bool diffusion_on = true;
 	bool growth_on = false;
 	bool advection_on = true;
-	bool gaussian_ic = true;
-	int source_sink_cond = 0; // 1-4 different testing scenarios for source & sink locations
+	bool gaussian_ic = false;
+	int source_sink_cond = 1; // 1-4 different testing scenarios for source & sink locations
 	/*	0: No sources or sinks
 		1: Source on bottom, sink on top
 		2: Sources and sinks covering the entire disk
@@ -32,10 +33,10 @@ int main(int argc, char* argv[])
 		4: Sources and sinks covering either side of embryo (separated across x-axis)*/
 	
 	// Output locations
-	bool save_vtk = true;
+	bool save_vtk = false;
 	bool save_hdf5 = false;
 	bool save_mass = false;
-	bool save_csv = false;
+	bool save_csv = true;
 	std::string cwd = get_cwd();
 	const std::string path_output = cwd + "/output_advection_diffusion/";
 	create_directory_if_not_exist(path_output);
@@ -227,7 +228,11 @@ int main(int argc, char* argv[])
         }
 		++init_dom_iter;
 	}
-	
+	// Initialize phi gradient & gradient magnitude
+	if (advection_on){
+		get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
+		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
+	}
 	// Check and print initial mass after initializing concentrations
 	const double dx = g_dist.spacing(x), dy = g_dist.spacing(y); // Get grid spacings
 	std::cout << "dx = " << dx << ", dy = " << dy << std::endl;
@@ -259,6 +264,7 @@ int main(int argc, char* argv[])
 		const double dt = std::min(dt_adv, dt_dif);
 	}
 	std::cout << "dt = " << dt << std::endl;
+	double t_max = dt * max_iter;
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -269,11 +275,43 @@ int main(int argc, char* argv[])
 	// Initialize csv writer
 	std::ofstream file_out;
 	std::string csv_row = "";
-	if (save_csv){
-		// but don't create file unless save_csv is on
+	if (save_csv){ // but don't create file unless save_csv is on
 		std::string csv_path_output = save_path + ".csv";
 		create_file_if_not_exist(csv_path_output);
-		file_out.open(csv_path_output, std::ios_base::app); // append instead of overwrite
+		file_out.open(csv_path_output, std::ios_base::app);
+		// Fill first two rows with simulation settings
+		file_out << "diffusion," << 
+					"growth," << 
+					"advection," <<
+					"gaussian_ic," << 
+					"source_sink_condition," <<
+					"max_iter," << 
+					"interval_write," << 
+					"grid_size(NxN)," <<
+					"diffusion_constant," << 
+					"source_val," << 
+					"sink_val," <<
+					"v_x," << 
+					"v_y," << 
+					"dt," << 
+					"t_max\n";
+		
+		file_out << std::boolalpha << 
+		diffusion_on << "," << 
+		growth_on << "," << 
+		advection_on << "," << 
+		gaussian_ic << "," << 
+		source_sink_cond << "," <<
+		max_iter << "," << 
+		interval_write << "," << 
+		N << "," <<
+		to_string_with_precision(D, 3) << "," << 
+		to_string_with_precision(k_source, 3) << "," << 
+		to_string_with_precision(k_sink, 3) << "," <<
+		to_string_with_precision(v[0], 3) << "," << 
+		to_string_with_precision(v[1], 3) << "," << 
+		to_string_with_precision(dt, 6) << "," << 
+		to_string_with_precision(t_max, 6) << "\n";
 	}
 	
 	
@@ -291,7 +329,7 @@ int main(int argc, char* argv[])
 		// start of new row in csv file
 		if (save_csv && iter % interval_write == 0){csv_row = to_string_with_precision(t, 6);} 
 		// Update field calculations for whole grid
-		if (growth_on || advection_on){
+		if (growth_on){
 			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 		}
@@ -306,14 +344,19 @@ int main(int argc, char* argv[])
 		while(maintenance_dom_iter.isNext()) {
 			auto key = maintenance_dom_iter.get();
 			auto phi_here = g_dist.template getProp<PHI_N>(key);
+			auto conc_here = g_dist.template get<CONC_N>(key);
+			
+			// Save row to csv
 			if (save_csv && iter % interval_write == 0){
-				csv_row += "," + to_string_with_precision(g_dist.template get<CONC_N>(key));
-				}
+				csv_row += "," + to_string_with_precision(conc_here);
+			}
+				
+			// No-flux boundary + source/sink expansion
 			if(phi_here >= emb_boundary - phi_epsilon) {
 				for(int d = 0; d < dims; ++d) {
 					if(g_dist.template get<PHI_N>(key.move(d, 1)) < emb_boundary + phi_epsilon) {
 						// Impose no-flux boundary
-						g_dist.template get<CONC_N>(key.move(d, 1)) = g_dist.template get<CONC_N>(key);
+						g_dist.template get<CONC_N>(key.move(d, 1)) = conc_here;
 						
 						if (growth_on){
 							// Expand sources / sinks
@@ -327,7 +370,7 @@ int main(int argc, char* argv[])
 					}
 					if(g_dist.template get<PHI_N>(key.move(d, -1)) < emb_boundary + phi_epsilon) {
 						// Impose no-flux boundary
-						g_dist.template get<CONC_N>(key.move(d, -1)) = g_dist.template get<CONC_N>(key);
+						g_dist.template get<CONC_N>(key.move(d, -1)) = conc_here;
 						
 						if (growth_on){
 							// Expand sources / sinks
@@ -374,14 +417,14 @@ int main(int argc, char* argv[])
 																+ dt*ksource_here - dt*ksink_here*u;            
 					}
 					else if (diffusion_on && advection_on){
-						// Get unit vector of phi gradient to correct direction of velocity
 						auto phi_grad_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
 						auto phi_grad = g_dist.template getProp<PHI_GRAD>(key);
-						// vector multiplication in case we want unequal velocities between x&y
+						// Calculate unit vector of phi gradient to get correct magnitude & direction of velocity
+						// Vector multiplication in case we want unequal velocities between x & y
 						double v_adjusted[dims] = {v[0]*phi_grad[0]/phi_grad_mag, v[1]*phi_grad[1]/phi_grad_mag};
-						// Dot product with concentration gradient to get final advection term
 						auto grad_u = g_dist.template get<CONC_N_GRAD>(key);
 						double v_advec = 0;
+						// Dot product with concentration gradient to get final advection term
 						for(size_t d = 0; d < dims; d++){v_advec += v_adjusted[d] * grad_u[d];}
 						g_dist.template get<CONC_NPLUS1>(key) = u+ D*dt*laplacian_u + dt*ksource_here 
 																- dt*ksink_here*u + dt*v_advec;
@@ -409,10 +452,9 @@ int main(int argc, char* argv[])
 				redist_options.print_steadyState_iter               = true;
 				redist_options.save_temp_grid                       = true;
 				
-				// Instantiation of Sussman-redistancing class
+				// Redistancing
 				RedistancingSussman<grid_type, phi_type> redist_obj(g_dist, redist_options); 
-				//Update SDF using Sussman Redistancing 
-				redist_obj.run_redistancing<PHI_N, PHI_N>(); 
+				redist_obj.run_redistancing<PHI_N, PHI_N>();
 				// Calculate new gradient and magnitude using new phi_n
 				get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); 
 				get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
