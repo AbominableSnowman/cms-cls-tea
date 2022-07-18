@@ -21,10 +21,10 @@ int main(int argc, char* argv[])
 	// Define output locations & experiment values
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	bool diffusion_on = true;
-	bool growth_on = true;
+	bool growth_on = false;
 	bool advection_on = true;
 	bool gaussian_ic = true;
-	int source_sink_cond = 1; // 1-4 different testing scenarios for source & sink locations
+	int source_sink_cond = 0; // 1-4 different testing scenarios for source & sink locations
 	/*	0: No sources or sinks
 		1: Source on bottom, sink on top
 		2: Sources and sinks covering the entire disk
@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
 	bool save_vtk = true;
 	bool save_hdf5 = false;
 	bool save_mass = false;
-	bool save_csv = true;
+	bool save_csv = false;
 	std::string cwd = get_cwd();
 	const std::string path_output = cwd + "/output_advection_diffusion/";
 	create_directory_if_not_exist(path_output);
@@ -288,8 +288,10 @@ int main(int argc, char* argv[])
 	int iter = 0;
 	while(iter < max_iter) // looping over time
 	{
+		// start of new row in csv file
+		if (save_csv && iter % interval_write == 0){csv_row = to_string_with_precision(t, 6);} 
 		// Update field calculations for whole grid
-		if (growth_on){
+		if (growth_on || advection_on){
 			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 		}
@@ -297,7 +299,6 @@ int main(int argc, char* argv[])
 			get_laplacian_grid<CONC_N, CONC_LAP>(g_dist);
 			get_upwind_gradient<CONC_N, V_SIGN, CONC_N_GRAD>(g_dist, 1, true);
 		}
-		if (save_csv && iter % interval_write == 0){csv_row = to_string_with_precision(t, 6);} // start of new row in csv file
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		// Grid maintenance: no-flux boundary, source/sink expansion, SDF distortion
 		auto maintenance_dom_iter = g_dist.getDomainIterator();
@@ -373,9 +374,15 @@ int main(int argc, char* argv[])
 																+ dt*ksource_here - dt*ksink_here*u;            
 					}
 					else if (diffusion_on && advection_on){
+						// Get unit vector of phi gradient to correct direction of velocity
+						auto phi_grad_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
+						auto phi_grad = g_dist.template getProp<PHI_GRAD>(key);
+						// vector multiplication in case we want unequal velocities between x&y
+						double v_adjusted[dims] = {v[0]*phi_grad[0]/phi_grad_mag, v[1]*phi_grad[1]/phi_grad_mag};
+						// Dot product with concentration gradient to get final advection term
 						auto grad_u = g_dist.template get<CONC_N_GRAD>(key);
 						double v_advec = 0;
-						for(size_t d = 0; d < dims; d++){v_advec += abs(grad_u[d]) * v[d];}
+						for(size_t d = 0; d < dims; d++){v_advec += v_adjusted[d] * grad_u[d];}
 						g_dist.template get<CONC_NPLUS1>(key) = u+ D*dt*laplacian_u + dt*ksource_here 
 																- dt*ksink_here*u + dt*v_advec;
 					}
@@ -386,7 +393,7 @@ int main(int argc, char* argv[])
 		} // End diffusion
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (growth_on){
-			if (phi_grad_tol_break > 50) {	
+			if (phi_grad_tol_break > 20) {	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
 				redist_options.max_iter                             = 1e4;
