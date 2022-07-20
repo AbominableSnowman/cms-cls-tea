@@ -23,9 +23,9 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	bool diffusion_on = true;
 	bool growth_on = false;
-	bool advection_on = true;
-	bool gaussian_ic = false;
-	int source_sink_cond = 1; // 1-4 different testing scenarios for source & sink locations
+	bool advection_on = false;
+	bool gaussian_ic = true;
+	int source_sink_cond = 0; // 1-4 different testing scenarios for source & sink locations
 	/*	0: No sources or sinks
 		1: Source on bottom, sink on top
 		2: Sources and sinks covering the entire disk
@@ -35,23 +35,19 @@ int main(int argc, char* argv[])
 	// Output locations
 	bool save_vtk = false;
 	bool save_hdf5 = false;
-	bool save_mass = false;
-	bool save_csv = true;
-	std::string cwd = get_cwd();
-	const std::string path_output = cwd + "/output_advection_diffusion/";
-	create_directory_if_not_exist(path_output);
-	std::string save_path = path_output + "SrcSnk" + std::to_string(source_sink_cond);
-	if (diffusion_on){save_path += "_diff";}
-	if (growth_on){save_path += "_growth";}
-	if (advection_on){save_path += "_advec";}
+	bool save_mass = true;
+	bool save_csv = false;
+	std::string output_folder = "/output_advection_diffusion/";
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Simulation & grid values
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Temporal values
-	int max_iter = 1e3; // max iteration --> be careful, that the box is large enough to contain the growing disk!
-	int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
+	double t_max = 10.0;
+	//int max_iter = 1e3; // max iteration --> be careful, that the box is large enough to contain the growing disk!
+	//int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
+	
 	
 	// Spatial values
 	const size_t dims = 2; // Grid dimensions
@@ -64,28 +60,14 @@ int main(int argc, char* argv[])
 	const double center[dims] = {0.5*(box_upper+box_lower), 0.5*(box_upper+box_lower)};
 	
 	// Diffusion values
-	const double D = 0.1; // diffusion constant
+	const double D = 0.1; // diffusion constant; um^2/s? 
 	double k_source = 1;
 	double k_sink   = 1;
 	double mu[dims]    = {box_upper/2.0, box_upper/2.0}; // For initial gaussian conc field
 	double sigma[dims] = {box_upper/10.0, box_upper/10.0}; // For initial gaussian conc field
 	
 	// Growth values
-	const double v[dims] = {0.2, 0.2};
-	
-	// Grid property indices		
-	constexpr size_t
-		CONC_N                 = 0,
-		CONC_NPLUS1            = 1,
-		CONC_LAP               = 2,
-		CONC_N_GRAD            = 3,
-		K_SOURCE               = 4,
-		K_SINK                 = 5,
-		PHI_N                  = 6,  // level-set function Phi
-		PHI_NPLUS1             = 7,  // level-set function Phi of next timepoint
-		V_SIGN                 = 8,  // sign of velocity, needed for the upwinding
-		PHI_GRAD               = 9,  // gradient of phi (vector field)
-		PHI_GRAD_MAGNITUDE     = 10; // Eucledian norm of gradient (scalar field)
+	const double v[dims] = {0.1, 0.1};
 	
 	// Signed distance function values
 	double emb_boundary = 0; // embryo boundary: where SDF ~= 0
@@ -97,38 +79,66 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	auto & v_cl = create_vcluster();
 	
+	// Grid property indices		
+	constexpr size_t
+		CONC_N                 = 0,
+		CONC_NPLUS1            = 1,
+		CONC_LAP               = 2,
+		CONC_N_GRAD            = 3,
+		K_SOURCE               = 4,
+		K_SINK                 = 5,
+		PHI_N                  = 6,  // level-set function Phi
+		PHI_NPLUS1             = 7,  // level-set function Phi of next timepoint
+		VELOCITY               = 8,  // velocity vector field
+		PHI_GRAD               = 9,  // gradient of phi (vector field)
+		PHI_GRAD_MAGNITUDE     = 10; // Eucledian norm of gradient (scalar field)
+	
 	// Create grid of size NxN
 	Box<dims, double> box({box_lower, box_lower}, {box_upper, box_upper});
 	Ghost<dims, long int> ghost(1);
-	typedef aggregate<double, double, double, 
-					  double[dims], double, double, 
-					  double, double, int, 
-					  double[dims], double> props;
+	typedef aggregate<double, 			// CONC_N
+					  double, 			// CONC_NPLUS1
+					  double, 			// CONC_LAP
+					  double[dims], 	// CONC_N_GRAD
+					  double, 			// K_SOURCE
+					  double, 			// K_SINK
+					  double, 			// PHI_N
+					  double, 			// PHI_NPLUS1
+					  double[dims], 	// VELOCITY
+					  double[dims], 	// PHI_GRAD
+					  double			// PHI_GRAD_MAGNITUDE
+					  > props;
 	typedef grid_dist_id<dims, double, props > grid_type;
 	grid_type g_dist(sz, box, ghost);
-	g_dist.setPropNames({"CONC_N", "CONC_NPLUS1", "CONC_LAP", 
-						 "CONC_N_GRAD", "K_SOURCE", "K_SINK", 
-						 "PHI_N", "PHI_NPLUS1", "V_SIGN", 
-						 "PHI_GRAD", "PHI_GRAD_MAGNITUDE"});
+	g_dist.setPropNames({"CONC_N", 
+						"CONC_NPLUS1", 
+						"CONC_LAP", 
+						"CONC_N_GRAD", 
+						"K_SOURCE", 
+						"K_SINK", 
+						"PHI_N", 
+						"PHI_NPLUS1", 
+						"VELOCITY", 
+						"PHI_GRAD", 
+						"PHI_GRAD_MAGNITUDE"});
 	
-	// Grid Layer Inititializations
-	init_grid_and_ghost<V_SIGN>(g_dist, 1);
+	
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Initialize grid values
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// init_grid_and_ghost<VELOCITY>(g_dist, v);
 	init_grid_and_ghost<PHI_N>(g_dist, -1);
 	init_grid_and_ghost<PHI_NPLUS1>(g_dist, -1);
 	init_grid_and_ghost<CONC_N>(g_dist, 0);
 	init_grid_and_ghost<CONC_NPLUS1>(g_dist, 0);
+	init_analytic_sdf_circle<PHI_N>(g_dist, radius, center[x], center[y]); // Level-set function
+	// Phi gradient & gradient magnitude
+	if (growth_on || advection_on){
+		get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
+		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
+	}
 	
-	// Initialize level-set function with analytic signed distance function at each grid point
-	init_analytic_sdf_circle<PHI_N>(g_dist, radius, center[x], center[y]);
-	
-	// Get the upwind gradient of Phi in order to get the surface normals (for advection)
-	get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
-	
-	
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Initialize source, sink, & concentration field
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Find the biggest phi value and its location + max x/y coordinates in embryo
+	// For source/sink: find the biggest phi value and its location + max x/y coordinates in domain
 	double phi_max = 0;
 	double x_max = 0;
     double y_max = 0;
@@ -156,18 +166,29 @@ int main(int argc, char* argv[])
     std::cout << "phi is: " << phi_max << std::endl;
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Set source & sink locations & initialize concentration field
+	// Concentration initial condition, source/sink, & velocity vector field
 	auto init_dom_iter = g_dist.getDomainIterator();
 	while(init_dom_iter.isNext()) {
 		auto key = init_dom_iter.get(); // index of current grid node
 		auto phi_here = g_dist.template getProp<PHI_N>(key);
 		Point<grid_type::dims, typename grid_type::stype> coords = g_dist.getPos(key);
 		
+		// Velocity. Defined everywhere b/c of growing domain
+		if (growth_on || advection_on){
+			auto phi_grad_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
+			auto phi_grad = g_dist.template getProp<PHI_GRAD>(key);
+			// Calculate unit vector of phi gradient to get correct magnitude & direction of velocity
+			// Vector multiplication in case we want unequal velocities between x & y
+			double v_adjusted[dims] = {v[0]*phi_grad[0]/phi_grad_mag, v[1]*phi_grad[1]/phi_grad_mag};
+			g_dist.template getProp<VELOCITY>(key)[0] = v_adjusted[0];
+			g_dist.template getProp<VELOCITY>(key)[1] = v_adjusted[1];
+		}
+		
 		if (phi_here >= emb_boundary - phi_epsilon) {
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// Concentration initial conditions
 			if (gaussian_ic){
-				g_dist.template get<CONC_N>(key)= gaussian(coords, mu, sigma);
+				g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma);
 			}
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// Sources and sinks
@@ -228,11 +249,7 @@ int main(int argc, char* argv[])
         }
 		++init_dom_iter;
 	}
-	// Initialize phi gradient & gradient magnitude
-	if (advection_on){
-		get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
-		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
-	}
+	
 	// Check and print initial mass after initializing concentrations
 	const double dx = g_dist.spacing(x), dy = g_dist.spacing(y); // Get grid spacings
 	std::cout << "dx = " << dx << ", dy = " << dy << std::endl;
@@ -249,6 +266,7 @@ int main(int argc, char* argv[])
 	const double dt_dif = get_diffusion_time_step(g_dist, D);
 	const double dt = dt_dif;
 	if (growth_on || advection_on){
+		// doing this manually b/c function doesn't seem to work with array
 		//auto max_v = *std::max_element(std::begin(v), std::end(v));
 		//const double dt_adv = get_advection_time_step_cfl(g_dist, max_v, 0.1);
 		double sum = 0;
@@ -264,19 +282,27 @@ int main(int argc, char* argv[])
 		const double dt = std::min(dt_adv, dt_dif);
 	}
 	std::cout << "dt = " << dt << std::endl;
-	double t_max = dt * max_iter;
+	int max_iter = (int)(t_max / dt) + 1;
+	int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Saving
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	std::string cwd = get_cwd();
+	const std::string path_output = cwd + output_folder;
+	create_directory_if_not_exist(path_output);
+	std::string save_name = "SrcSnk" + std::to_string(source_sink_cond);
+	if (diffusion_on){save_name += "_diff";}
+	if (growth_on){save_name += "_growth";}
+	if (advection_on){save_name += "_advec";}
 	// Save initial state
 	if (save_vtk){g_dist.write(path_output + "grid_initial", FORMAT_BINARY);}
 	// Initialize csv writer
 	std::ofstream file_out;
 	std::string csv_row = "";
 	if (save_csv){ // but don't create file unless save_csv is on
-		std::string csv_path_output = save_path + ".csv";
+		std::string csv_path_output = path_output + save_name + ".csv";
 		create_file_if_not_exist(csv_path_output);
 		file_out.open(csv_path_output, std::ios_base::app);
 		// Fill first two rows with simulation settings
@@ -288,13 +314,15 @@ int main(int argc, char* argv[])
 					"max_iter," << 
 					"interval_write," << 
 					"grid_size(NxN)," <<
-					"diffusion_constant," << 
+					"diffusion_coefficient," << 
 					"source_val," << 
 					"sink_val," <<
 					"v_x," << 
 					"v_y," << 
 					"dt," << 
-					"t_max\n";
+					"t_max,"
+					"dx," <<
+					"dy\n";
 		
 		file_out << std::boolalpha << 
 		diffusion_on << "," << 
@@ -311,11 +339,11 @@ int main(int argc, char* argv[])
 		to_string_with_precision(v[0], 3) << "," << 
 		to_string_with_precision(v[1], 3) << "," << 
 		to_string_with_precision(dt, 6) << "," << 
-		to_string_with_precision(t_max, 6) << "\n";
+		to_string_with_precision(t_max, 6) << 
+		to_string_with_precision(dx, 6) << 
+		to_string_with_precision(dy, 6) << 
+		"\n";
 	}
-	
-	
-	
 	
 	
 	
@@ -328,14 +356,14 @@ int main(int argc, char* argv[])
 	{
 		// start of new row in csv file
 		if (save_csv && iter % interval_write == 0){csv_row = to_string_with_precision(t, 6);} 
-		// Update field calculations for whole grid
+		// Update field calculations for whole grid; don't need to update every loop for advection
 		if (growth_on){
-			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
+			get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 		}
 		if (diffusion_on){
 			get_laplacian_grid<CONC_N, CONC_LAP>(g_dist);
-			get_upwind_gradient<CONC_N, V_SIGN, CONC_N_GRAD>(g_dist, 1, true);
+			get_upwind_gradient<CONC_N, VELOCITY, CONC_N_GRAD>(g_dist, 1, true);
 		}
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		// Grid maintenance: no-flux boundary, source/sink expansion, SDF distortion
@@ -456,7 +484,7 @@ int main(int argc, char* argv[])
 				RedistancingSussman<grid_type, phi_type> redist_obj(g_dist, redist_options); 
 				redist_obj.run_redistancing<PHI_N, PHI_N>();
 				// Calculate new gradient and magnitude using new phi_n
-				get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); 
+				get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true); 
 				get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 			}
 			
@@ -479,9 +507,9 @@ int main(int argc, char* argv[])
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		// Write grid to vtk and/or hdf5; save mass monitoring file
 		if (iter % interval_write == 0){
-			if (save_vtk){g_dist.write_frame(save_path, iter, FORMAT_BINARY);}
-			if (save_hdf5){g_dist.save(save_path + std::to_string(iter) + ".hdf5");}
-			//if (save_mass){monitor_absolute_mass_over_region<CONC_N, PHI_N>(g_dist, emb_boundary, m_initial, p_volume, t, iter, path_output, save_path + "mass.csv");}
+			if (save_vtk){g_dist.write_frame(path_output + save_name, iter, FORMAT_BINARY);}
+			if (save_hdf5){g_dist.save(path_output + save_name + std::to_string(iter) + ".hdf5");}
+			if (save_mass){monitor_absolute_mass_over_region<CONC_N, PHI_N>(g_dist, emb_boundary, m_initial, p_volume, t, iter, path_output, save_name + "mass.csv");}
 			if (save_csv){file_out << csv_row << std::endl;}
 		}
 		std::cout << "Time :" << t << ", iteration: " << std::to_string(iter) << std::endl;
