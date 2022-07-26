@@ -25,10 +25,10 @@ void yousefs_simulation(int experiment_n, json conditions);
 int main(int argc, char* argv[])
 {
 	openfpm_init(&argc, &argv); // Initialize library.
-	std::ifstream f("./testing_conditions.json");
+	std::ifstream f("./sim_params/sim_tests_vtk_data.json");
 	json conditions = json::parse(f);
 	
-	for(int experiment_n=1; experiment_n<=50; experiment_n++){
+	for(int experiment_n=1; experiment_n<=15; experiment_n++){
 		yousefs_simulation(experiment_n, conditions);
 		std::cout << "Experiment " << experiment_n << " finshed." << std::endl;
 	}
@@ -48,22 +48,20 @@ void yousefs_simulation(int experiment_n, json conditions)
 	int source_sink_cond = conditions[std::to_string(experiment_n)]["source_sink_condition"];
 	double D = conditions[std::to_string(experiment_n)]["diffusion_coefficient"]; 
 	
-	double velocity_magnitude = conditions[std::to_string(experiment_n)]["velocity_magnitude"];
-	double v_x = std::sqrt(velocity_magnitude*velocity_magnitude/2);
-	double v_y = std::sqrt(velocity_magnitude*velocity_magnitude/2);
-	double v[2] = {v_x,v_y};
-	//double t_max = conditions[std::to_string(experiment_n)]["t_max"];
-	double t_max = 1.0;
+	double velocity = conditions[std::to_string(experiment_n)]["vx_vy"];
+	double v[2] = {velocity, velocity};
+	double t_max = conditions[std::to_string(experiment_n)]["t_max"];
+	//double t_max = 10.0;
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Define output locations & experiment values
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Outputs
-	bool save_vtk = false;
+	bool save_vtk = true;
 	bool save_hdf5 = false;
 	bool save_mass = false;
-	bool save_csv = true;
+	bool save_csv = false;
 	std::string output_folder = "/output_all_simulations/";
 	
 	
@@ -407,7 +405,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 				// Determine if redistancing needs to be run based on # of grid points 
 				if (growth_on){
 					auto phi_grad_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(key); //get the magnitude of the phi gradient
-					if (phi_grad_mag > 1.15 || phi_grad_mag < 0.8){
+					if (phi_grad_mag > 1.15 || phi_grad_mag < 0.85){
 						phi_grad_tol_break += 1;
 					}
 				}
@@ -453,7 +451,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (growth_on){
-			if (phi_grad_tol_break > 10) {	
+			if (phi_grad_tol_break > 50) {	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
 				redist_options.max_iter                             = 1e4;

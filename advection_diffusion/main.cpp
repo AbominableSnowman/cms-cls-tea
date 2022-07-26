@@ -38,14 +38,14 @@ int main(int argc, char* argv[])
 	bool save_vtk = true;
 	bool save_hdf5 = false;
 	bool save_mass = false;
-	bool save_csv = true;
+	bool save_csv = false;
 	std::string output_folder = "/output_advection_diffusion/";
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Other simulation values
 	
 	// Temporal values
-	double t_max = 5.0;
+	double t_max = 10;
 	//int max_iter = 1e3; // max iteration --> be careful, that the box is large enough to contain the growing disk!
 	//int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
 	
@@ -345,6 +345,7 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Simulation
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	std::cout << "0 %" << std::endl;
 	double t = 0;
 	int iter = 0;
 	while(iter < max_iter) // looping over time
@@ -352,7 +353,7 @@ int main(int argc, char* argv[])
 		// start of new row in csv file
 		if (save_csv && iter % interval_write == 0){csv_row = to_string_with_precision(t, 6);} 
 		// Update field calculations for whole grid; don't need to update every loop for advection
-		if (growth_on){
+		if (false){
 			get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
 			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 		}
@@ -453,7 +454,7 @@ int main(int argc, char* argv[])
 		} // End diffusion
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (growth_on){
-			if (phi_grad_tol_break > 10) {	
+			if (phi_grad_tol_break > 50) {	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
 				redist_options.max_iter                             = 1e4;
@@ -482,16 +483,22 @@ int main(int argc, char* argv[])
 				auto key = phi_dom_iter.get();
 				
 				auto phi_mag = g_dist.template getProp<PHI_GRAD_MAGNITUDE>(key);
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v[0] * phi_mag;
-				
-				
 				/*
+				
+				auto v_here = g_dist.template get<VELOCITY>(key);
+				
+				double v_mag = std::sqrt(v_here[0]*v_here[0] + v_here[1]*v_here[1]);
+				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v_mag * phi_mag;
+				
+				
+				
 				double dot_v_dphi = 0;
 				auto v_here = g_dist.template get<VELOCITY>(key);
 				auto grad_phi = g_dist.template getProp<PHI_GRAD>(key);
 				for(size_t d = 0; d < dims; d++){dot_v_dphi += v_here[d] * grad_phi[d];}
 				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * dot_v_dphi;
 				*/
+				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v[0] * phi_mag;
 				
 				++phi_dom_iter;
 			}
@@ -511,6 +518,10 @@ int main(int argc, char* argv[])
 			if (save_mass){monitor_absolute_mass_over_region<CONC_N, PHI_N>(g_dist, emb_boundary, m_initial, p_volume, t, iter, path_output, save_name + "_mass.csv");}
 			if (save_csv){file_out << csv_row << std::endl;}
 		}
+		
+		if (iter == (int)(1*max_iter/4)){std::cout << "25%" << std::endl;} 
+		else if (iter == (int)(2*max_iter/4)){std::cout << "50%" << std::endl;} 
+		else if (iter == (int)(3*max_iter/4)){std::cout << "75%" << std::endl;}  
 		
 		iter += 1;
 		t += dt;
