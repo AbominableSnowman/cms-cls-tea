@@ -29,10 +29,10 @@ double b_low = 0;
 // Property indices
 constexpr size_t PHI_N = 0, PHI_NPLUS1 = 1, V_SIGN = 2, PHI_GRAD = 3, PHI_GRAD_MAGNITUDE = 4,
 CONC_N = 5, CONC_NPLUS1 = 6, CONC_LAP = 7, K_SOURCE = 8, K_SINK = 9, CONC_N_GRAD = 10,
-VELOCITY = 11, PECLET = 12, VELOCITY_MAGNITUDE = 13;
+VELOCITY = 11, PECLET = 12, VELOCITY_MAGNITUDE = 13, VELOCITY_GRAD = 14;
 
 typedef aggregate<double, double, int, double[dims], double, 
-double, double, double, double, double, double[dims], double[dims], double, double> props;
+double, double, double, double, double, double[dims], double[dims], double, double, double[dims]> props;
 
 int main(int argc, char* argv[])
 {
@@ -64,7 +64,7 @@ int main(int argc, char* argv[])
 	// Assigning names for readability
 	g_dist.setPropNames({"PHI_N", "PHI_NPLUS1", "V_SIGN", "PHI_GRAD", "PHI_GRAD_MAGNITUDE",
 	"CONC_N", "CONC_NPLUS1", "CONC_LAP", "K_SOURCE", "K_SINK", "CONC_N_GRAD", "VELOCITY",
-	"PECLET", "VELOCITY_MAGNITUDE"});
+	"PECLET", "VELOCITY_MAGNITUDE", "VELOCITY_GRAD"});
 	
 	// initializing grid per property with a value
 	init_grid_and_ghost<CONC_N>(g_dist, 0);
@@ -91,7 +91,7 @@ int main(int argc, char* argv[])
 	std::cout << "timestep is: " << dt << std::endl;
 
 	// IC's: Gaussian 
-	double mu [dims]    = {rightTopCorner/2. ,rightTopCorner/2.};
+	double mu [dims]    = {rightTopCorner/2., rightTopCorner/2.};
 	double sigma [dims] = {rightTopCorner/5., rightTopCorner/5.}; 
 	auto domGaussian = g_dist.getDomainIterator();
 	while(domGaussian.isNext())
@@ -113,7 +113,6 @@ int main(int argc, char* argv[])
 		// Compute upwind gradient of phi for whole grid
 		get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
 
-
 		// Max SDF value — needed for velocity
 		double x_max = 0;
 		double y_max = 0;
@@ -121,9 +120,9 @@ int main(int argc, char* argv[])
 
 		// find the biggest SDF value and its location
 		auto domPhiMax = g_dist.getDomainIterator();
-		while(domPhiMax.isNext()) // Loop over all grid points
+		while(domPhiMax.isNext()) 
 		{
-			auto key = domPhiMax.get(); // index of current grid node
+			auto key = domPhiMax.get(); 
 			if (g_dist.template get<PHI_N>(key) > phi_max){
 				phi_max = g_dist.template get<PHI_N>(key);
 
@@ -151,7 +150,8 @@ int main(int argc, char* argv[])
 			++domVelocity;
 		}
 
-		get_upwind_gradient<CONC_N, VELOCITY, CONC_N_GRAD>(g_dist, 1, true);	
+		get_upwind_gradient<CONC_N, VELOCITY, CONC_N_GRAD>(g_dist, 1, true);
+		get_upwind_gradient<VELOCITY_MAGNITUDE, VELOCITY, VELOCITY_GRAD>(g_dist, 1, true);	
 		
 		// one-sided at the boundary
 		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
@@ -235,8 +235,12 @@ int main(int argc, char* argv[])
 			{	
 				double advectionTerm = 0.;
 				for(size_t d = 0; d < dims; d++){advectionTerm += g_dist.template get<CONC_N_GRAD>(key)[d] * g_dist.template get<VELOCITY>(key)[d];}
+
+				double dilutionTerm = 0.;
+				for(size_t d = 0; d < dims; d++){dilutionTerm += g_dist.template get<CONC_N>(key) * g_dist.template get<VELOCITY_GRAD>(key)[d] ;}
 				
-            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key) + dt * advectionTerm;
+            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key)
+											+ dt * advectionTerm + dt * dilutionTerm;
 			}
             ++domConDE;
         }
