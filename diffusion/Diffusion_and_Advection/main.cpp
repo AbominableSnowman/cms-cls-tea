@@ -13,6 +13,7 @@
 #include "timesteps_stability.hpp"
 #include "monitor_total_mass.hpp"
 #include "FiniteDifference/Upwind_gradient.hpp"
+#include "FiniteDifference/FD_simple.hpp"
 
 // set-up
 const size_t dims = 2;
@@ -100,7 +101,7 @@ int main(int argc, char* argv[])
 	g_dist.write(path_output + "grid_initial", FORMAT_BINARY); // Save initial grid
 	
 	// setting up the system for solving
-	get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
+	get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true);
 	get_upwind_gradient<CONC_N, VELOCITY, CONC_N_GRAD>(g_dist, 1, true);
 
 	double t = 0;
@@ -110,9 +111,6 @@ int main(int argc, char* argv[])
 
 	while(iter < max_iter)
 	{	
-		get_vector_magnitude<VELOCITY, VELOCITY_MAGNITUDE, double>(g_dist);
-		get_upwind_gradient<VELOCITY_MAGNITUDE, VELOCITY, VELOCITY_GRAD>(g_dist, 1, true);
-
 		// Max SDF value — needed for velocity
 		double phiMax = 0;
 		auto domPhiMax = g_dist.getDomainIterator();
@@ -132,10 +130,13 @@ int main(int argc, char* argv[])
 			auto phiGrad = g_dist.template get<PHI_GRAD>(key);
 
 			// Linear velocity profile
-			for(size_t d = 0; d < dims; d++){g_dist.template get<VELOCITY>(key)[d] = phiGrad[d] * (v[d] * ((phiMax - phiPoint)/phiMax));}
-
+			for(size_t d = 0; d < dims; d++){g_dist.template get<VELOCITY>(key)[d] = (phiGrad[d] * v[d] * ((phiMax - phiPoint)/phiMax));}
+			
 			++domVel;
 		}
+
+		get_vector_magnitude<VELOCITY, VELOCITY_MAGNITUDE, double>(g_dist);
+		get_central_FD_grid<VELOCITY_MAGNITUDE, VELOCITY_GRAD>(g_dist, 1);
 
 		get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
 		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
@@ -186,7 +187,7 @@ int main(int argc, char* argv[])
 			double growthTerm = 0.;
 			auto phiGrad = g_dist.template get<PHI_GRAD>(key);
 
-			for(size_t d = 0; d < dims; d++){growthTerm += phiGrad[d] * g_dist.template get<VELOCITY>(key)[d];}
+			for(size_t d = 0; d < dims; d++){growthTerm += g_dist.template get<VELOCITY>(key)[d] * g_dist.template get<VELOCITY>(key)[d];}
 			g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * growthTerm;
 
 			++domSDF;
