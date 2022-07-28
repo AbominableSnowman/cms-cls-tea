@@ -20,7 +20,7 @@ constexpr size_t x = 0, y = 1;
 
 // speed and diffusion parameters
 const double velocity_x = 1.75;
-const double velocity_y = 3.75;
+const double velocity_y = 1.75;
 const double v[dims] = {velocity_x, velocity_y};
 const double D = 0.9;
 const double k_source = 1;
@@ -29,10 +29,12 @@ double b_low = 0;
 
 // Property indices
 constexpr size_t PHI_N = 0, PHI_NPLUS1 = 1, V_SIGN = 2, PHI_GRAD = 3, PHI_GRAD_MAGNITUDE = 4,
-CONC_N = 5, CONC_NPLUS1 = 6, CONC_LAP = 7, K_SOURCE = 8, K_SINK = 9, CONC_N_GRAD = 10, VELOCITY = 11;
+CONC_N = 5, CONC_NPLUS1 = 6, CONC_LAP = 7, K_SOURCE = 8, K_SINK = 9, CONC_N_GRAD = 10,
+VELOCITY = 11, VELOCITY_GRAD = 12, VELOCITY_MAGNITUDE = 13, PECLET = 14;
 
 typedef aggregate<double, double, int, double[dims], double,
-double, double, double, double, double, double[dims], double[dims]> props;
+double, double, double, double, double, double[dims], double[dims],
+double[dims], double, double> props;
 
 int main(int argc, char* argv[])
 {
@@ -62,7 +64,8 @@ int main(int argc, char* argv[])
 
 	// Assigning names for readability
 	g_dist.setPropNames({"PHI_N", "PHI_NPLUS1", "V_SIGN", "PHI_GRAD", "PHI_GRAD_MAGNITUDE",
-	"CONC_N", "CONC_NPLUS1", "CONC_LAP", "K_SOURCE", "K_SINK", "CONC_N_GRAD", "VELOCITY"});
+	"CONC_N", "CONC_NPLUS1", "CONC_LAP", "K_SOURCE", "K_SINK", "CONC_N_GRAD", "VELOCITY",
+	"VELOCITY_GRAD", "VELOCITY_MAGNITUDE", "PECLET"});
 	
 	// initializing grid per property with a value
 	init_grid_and_ghost<CONC_N>(g_dist, 0);
@@ -97,7 +100,6 @@ int main(int argc, char* argv[])
 	g_dist.write(path_output + "grid_initial", FORMAT_BINARY); // Save initial grid
 	
 	// setting up the system for solving
-	//////////////////////////////////////////////////////////////
 	get_upwind_gradient<PHI_N, VELOCITY, PHI_GRAD>(g_dist, 1, true);
 	get_upwind_gradient<CONC_N, VELOCITY, CONC_N_GRAD>(g_dist, 1, true);
 
@@ -108,13 +110,30 @@ int main(int argc, char* argv[])
 
 	while(iter < max_iter)
 	{	
+		get_vector_magnitude<VELOCITY, VELOCITY_MAGNITUDE, double>(g_dist);
+		get_upwind_gradient<VELOCITY_MAGNITUDE, VELOCITY, VELOCITY_GRAD>(g_dist, 1, true);
+
+		// Max SDF value — needed for velocity
+		double phiMax = 0;
+		auto domPhiMax = g_dist.getDomainIterator();
+		while(domPhiMax.isNext()) 
+		{
+			auto key = domPhiMax.get(); 
+			if (g_dist.template get<PHI_N>(key) > phiMax){phiMax = g_dist.template get<PHI_N>(key);}
+			++domPhiMax;
+		}
+
 		// Velocity assignment
 		auto domVel = g_dist.getDomainIterator();
 		while(domVel.isNext())
 		{	
 			auto key = domVel.get();
-			auto phi_grad = g_dist.template get<PHI_GRAD>(key);
-			for(size_t d = 0; d < dims; d++){g_dist.template get<VELOCITY>(key)[d] = phi_grad[d] * v[d];}
+			auto phiPoint = g_dist.template get<PHI_N>(key);
+			auto phiGrad = g_dist.template get<PHI_GRAD>(key);
+
+			// Linear velocity profile
+			for(size_t d = 0; d < dims; d++){g_dist.template get<VELOCITY>(key)[d] = phiGrad[d] * (v[d] * ((phiMax - phiPoint)/phiMax));}
+
 			++domVel;
 		}
 
@@ -133,7 +152,6 @@ int main(int argc, char* argv[])
 			if(abs(g_dist.template get<PHI_N>(key)) <= (narrowBand/2*dx))
 			{
 				counter = (phi_gra_mag > 1.15 || phi_gra_mag < 0.85) ? counter + 1 : counter; 
-				// std::cout << "phi_gra_mag:" << phi_gra_mag << std::endl;
 			}
 			++domRedistancing;
 		}
@@ -165,11 +183,11 @@ int main(int argc, char* argv[])
 		while(domSDF.isNext())
 		{	
 			auto key = domSDF.get();
-			double growth_term = 0.;
-			auto phi_grad = g_dist.template get<PHI_GRAD>(key);
+			double growthTerm = 0.;
+			auto phiGrad = g_dist.template get<PHI_GRAD>(key);
 
-			for(size_t d = 0; d < dims; d++){growth_term += phi_grad[d] * g_dist.template get<VELOCITY>(key)[d];}
-			g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * growth_term;
+			for(size_t d = 0; d < dims; d++){growthTerm += phiGrad[d] * g_dist.template get<VELOCITY>(key)[d];}
+			g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * growthTerm;
 
 			++domSDF;
 		}
@@ -203,11 +221,18 @@ int main(int argc, char* argv[])
 
 			if (g_dist.template getProp<PHI_NPLUS1>(key) >= b_low - std::numeric_limits<phi_type>::epsilon())
 			{	
-				auto conc_grad = g_dist.template get<CONC_N_GRAD>(key);
 				double advectionTerm = 0.;
-				for(size_t d = 0; d < dims; d++){advectionTerm += conc_grad[d] * g_dist.template get<VELOCITY>(key)[d];}
-				
-            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key) + dt * advectionTerm;
+				auto concGrad = g_dist.template get<CONC_N_GRAD>(key);
+				for(size_t d = 0; d < dims; d++){advectionTerm += concGrad[d] * g_dist.template get<VELOCITY>(key)[d];}
+
+				double dilutionTerm = 0.;
+				auto conc = g_dist.template get<CONC_N>(key);
+				//auto velGrad = g_dist.template get<VELOCITY_GRAD>(key);
+				//for(size_t d = 0; d < dims; d++){dilutionTerm += conc * velGrad[d];}
+				auto velMag = g_dist.template get<VELOCITY_MAGNITUDE>(key);
+				dilutionTerm = conc * velMag;
+
+            	g_dist.template get<CONC_NPLUS1>(key) = g_dist.template get<CONC_N>(key) + D * dt * g_dist.template get<CONC_LAP>(key) + dt * (dilutionTerm + advectionTerm);
 			}
             ++domConDE;
         }
@@ -223,6 +248,18 @@ int main(int argc, char* argv[])
 		// Write grid to vtk
 		if (iter % interval_write == 0)
 		{
+			// Peclet
+			auto domPeclet = g_dist.getDomainIterator();
+			while(domPeclet.isNext())
+			{
+				auto key = domPeclet.get();
+				if (g_dist.template getProp<PHI_N>(key) >= b_low - std::numeric_limits<phi_type>::epsilon())
+				{
+					g_dist.template get<PECLET>(key) = g_dist.template get<VELOCITY_MAGNITUDE>(key) / D;
+				}
+				++domPeclet;
+			}
+
 			g_dist.write_frame(path_output + "/growth_and_diffusion", iter, FORMAT_BINARY);
 			std::cout << "Time :" << t << std::endl;
 		}
