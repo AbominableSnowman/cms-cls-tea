@@ -19,18 +19,26 @@ using json = nlohmann::json;
 #include "../include/Gaussian.hpp"
 #include "../include/monitor_total_mass.hpp"
 
-void yousefs_simulation(int experiment_n, json conditions);
+void yousefs_simulation(int simulation_n, json conditions);
 
 
 int main(int argc, char* argv[])
 {
 	openfpm_init(&argc, &argv); // Initialize library.
-	std::ifstream f("./sim_params/sim_tests_vtk_data.json");
+	//std::ifstream f("./sim_params/sim_tests_boundary_tests.json");
+	std::ifstream f("./sim_params/sim_tests.json");
 	json conditions = json::parse(f);
 	
-	for(int experiment_n=1; experiment_n<=15; experiment_n++){
-		yousefs_simulation(experiment_n, conditions);
-		std::cout << "Experiment " << experiment_n << " finshed." << std::endl;
+	
+	int max_sim_num = 0;
+	for (auto& el : conditions.items()){
+		if (max_sim_num < std::stoi(el.key())){max_sim_num = std::stoi(el.key());}
+	}
+	
+	for(int simulation_n=1; simulation_n<=max_sim_num; simulation_n++){
+		std::cout << "Simulation " << simulation_n << " started" << std::endl;
+		yousefs_simulation(simulation_n, conditions);
+		std::cout << "Simulation " << simulation_n << " finshed.\n\n\n\n";
 	}
 	openfpm_finalize();
 	return 0;
@@ -40,30 +48,33 @@ int main(int argc, char* argv[])
 
 
 
-void yousefs_simulation(int experiment_n, json conditions)
+void yousefs_simulation(int simulation_n, json conditions)
 {
-	int diffusion_on = conditions[std::to_string(experiment_n)]["diffusion_on"];
-	int growth_on = conditions[std::to_string(experiment_n)]["growth_on"];
-	int advection_on = conditions[std::to_string(experiment_n)]["advection_on"];
-	int source_sink_cond = conditions[std::to_string(experiment_n)]["source_sink_condition"];
-	double D = conditions[std::to_string(experiment_n)]["diffusion_coefficient"]; 
-	
-	double velocity = conditions[std::to_string(experiment_n)]["vx_vy"];
-	double v[2] = {velocity, velocity};
-	double t_max = conditions[std::to_string(experiment_n)]["t_max"];
-	//double t_max = 10.0;
+	int save_vtk = conditions[std::to_string(simulation_n)]["save_vtk"];
+	int save_csv = conditions[std::to_string(simulation_n)]["save_csv"];
+	int gaussian_ic = conditions[std::to_string(simulation_n)]["gaussian_ic"];
+	int diffusion_on = conditions[std::to_string(simulation_n)]["diffusion_on"];
+	int growth_on = conditions[std::to_string(simulation_n)]["growth_on"];
+	int advection_on = conditions[std::to_string(simulation_n)]["advection_on"];
+	int source_sink_cond = conditions[std::to_string(simulation_n)]["src_snk_cond"];
+	double D = conditions[std::to_string(simulation_n)]["D"]; 
+	double v_mag = conditions[std::to_string(simulation_n)]["v_mag"];
+	double v[2] = {std::sqrt(v_mag*v_mag/2), std::sqrt(v_mag*v_mag/2),};
+	double t_max = conditions[std::to_string(simulation_n)]["t_max"];
+	double k_source = conditions[std::to_string(simulation_n)]["k_source"];
+	double k_sink = conditions[std::to_string(simulation_n)]["k_sink"];
 	
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Define output locations & experiment values
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Outputs
-	bool save_vtk = true;
+	//bool save_vtk = false;
 	bool save_hdf5 = false;
 	bool save_mass = false;
-	bool save_csv = false;
+	//bool save_csv = true;
 	std::string output_folder = "/output_all_simulations/";
-	
+	int num_files = 100;
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Simulation & grid values
@@ -83,8 +94,8 @@ void yousefs_simulation(int experiment_n, json conditions)
 	const double center[dims] = {0.5*(box_upper+box_lower), 0.5*(box_upper+box_lower)};
 	
 	// Diffusion values
-	double k_source = 1;
-	double k_sink   = 1;
+	//double k_source = 1;
+	//double k_sink   = 1;
 	double mu[dims]    = {box_upper/2.0, box_upper/2.0}; // For initial gaussian conc field
 	double sigma[dims] = {box_upper/10.0, box_upper/10.0}; // For initial gaussian conc field
 	
@@ -193,7 +204,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 			auto phi_grad = g_dist.template getProp<PHI_GRAD>(key);
 			// Calculate unit vector of phi gradient to get correct magnitude & direction of velocity
 			// Vector multiplication in case we want unequal velocities between x & y
-			double v_adjusted[dims] = {v[0]*phi_grad[0], v[1]*phi_grad[1]/phi_grad_mag};
+			double v_adjusted[dims] = {-v[0]*phi_grad[0]/phi_grad_mag, -v[1]*phi_grad[1]/phi_grad_mag};
 			g_dist.template getProp<VELOCITY>(key)[0] = v_adjusted[0];
 			g_dist.template getProp<VELOCITY>(key)[1] = v_adjusted[1];
 		}
@@ -201,9 +212,8 @@ void yousefs_simulation(int experiment_n, json conditions)
 		if (phi_here >= emb_boundary - phi_epsilon) {
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// Concentration initial conditions
-			if (source_sink_cond == 0){
-				g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma);
-			}
+			if (gaussian_ic || source_sink_cond == 0){g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma);}
+			//g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma);
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// Sources and sinks
 			if (source_sink_cond == 1){
@@ -241,7 +251,6 @@ void yousefs_simulation(int experiment_n, json conditions)
 					g_dist.template get<K_SINK>(key) = 0;
 				}
 			}
-			// Scenario 4
 			else if (source_sink_cond == 4){
 				auto x_coord = coords.get(0);
 				auto y_coord = coords.get(1);
@@ -259,6 +268,19 @@ void yousefs_simulation(int experiment_n, json conditions)
 					g_dist.template get<K_SINK>(key) = 0;
 				}
 			}
+			else if (source_sink_cond == 5){
+				auto x_coord = coords.get(0);
+				auto y_coord = coords.get(1);
+				
+				if(phi_here < 0.15*phi_max && y_coord < y_max){
+					g_dist.template get<K_SOURCE>(key) = k_source;
+					g_dist.template get<K_SINK>(key) = 0;
+				}
+				else {
+					g_dist.template get<K_SINK>(key) = k_sink;
+					g_dist.template get<K_SOURCE>(key) = 0;
+				}
+			}
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
         }
 		++init_dom_iter;
@@ -274,23 +296,25 @@ void yousefs_simulation(int experiment_n, json conditions)
 	// Stability Conditions
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Diffusion stability condition
-	const double dt_dif = get_diffusion_time_step(g_dist, D);
-	const double dt = dt_dif;
+	double dt_dif = get_diffusion_time_step(g_dist, D);
+	std::cout << "dt_diffusion: " << dt_dif << std::endl;
+	double dt = dt_dif;
 	if (growth_on || advection_on){
 		grid_type::stype v_grid_type[dims] = {v[0], v[1]}; // need to make grid type v for function to work
 		double dt_adv = get_advection_time_step_cfl(g_dist, v_grid_type, 0.1);
-		const double dt = std::min(dt_adv, dt_dif); // Final dt is min of the two
+		std::cout << "dt_advection: " << dt_adv << std::endl;
+		dt = std::min(dt_adv, dt_dif); // Final dt is min of the two
 	}
 	int max_iter = (int)(t_max / dt) + 1;
-	int interval_write = std::round(max_iter / 100); // set how many frames should be saved
+	int interval_write = std::max((int) std::round(max_iter / num_files), 1); // set how many frames should be saved
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Configure outputs and save initial conditions
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	std::string cwd = get_cwd();
 	const std::string path_output = cwd + output_folder;
-	create_directory_if_not_exist(path_output);
-	std::string save_name = "sim_" + std::to_string(experiment_n);
+	//create_directory_if_not_exist(path_output);
+	std::string save_name = "sim_" + std::to_string(simulation_n);
 	
 	// Initialize csv writer
 	std::ofstream file_out;
@@ -310,6 +334,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 		"diffusion_coefficient," 				<< 
 		"source_val," 							<< 
 		"sink_val," 							<<
+		"v_mag," 								<< 
 		"v_x," 									<< 
 		"v_y," 									<< 
 		"dt," 									<< 
@@ -327,6 +352,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 		to_string_with_precision(D, 3) 			<< "," << 
 		to_string_with_precision(k_source, 3) 	<< "," << 
 		to_string_with_precision(k_sink, 3) 	<< "," <<
+		to_string_with_precision(v_mag, 3) 		<< "," << 
 		to_string_with_precision(v[0], 3) 		<< "," << 
 		to_string_with_precision(v[1], 3) 		<< "," << 
 		to_string_with_precision(dt, 6) 		<< "," << 
@@ -335,7 +361,26 @@ void yousefs_simulation(int experiment_n, json conditions)
 		to_string_with_precision(dy, 6) 		<< "\n\n";
 	}
 	
-	
+	// Print initial conditions
+	std::cout << 
+		"diffusion_on:     " 	<< diffusion_on 							<< "\n" << 
+		"growth_on:        " 	<< growth_on 								<< "\n" << 
+		"advection_on:     " 	<< advection_on 							<< "\n" << 
+		"source_sink_cond: " 	<< source_sink_cond 						<< "\n" <<
+		"max_iter:         " 	<< max_iter 								<< "\n" << 
+		"interval_write:   " 	<< interval_write 							<< "\n" << 
+		"N:                " 	<< N 										<< "\n" <<
+		"D:                " 	<< to_string_with_precision(D, 5) 			<< "\n" << 
+		"k_source:         " 	<< to_string_with_precision(k_source, 3) 	<< "\n" << 
+		"k_sink:           " 	<< to_string_with_precision(k_sink, 3) 		<< "\n" <<
+		"v_mag:            " 	<< to_string_with_precision(v_mag, 5) 		<< "\n" <<
+		"v_x:              " 	<< to_string_with_precision(v[0], 5) 		<< "\n" << 
+		"v_y:              " 	<< to_string_with_precision(v[1], 5) 		<< "\n" << 
+		"dt:               " 	<< to_string_with_precision(dt, 6) 			<< "\n" << 
+		"t_max:            " 	<< to_string_with_precision(t_max, 6) 		<< "\n" <<
+		"dx:               " 	<< to_string_with_precision(dx, 6) 			<< "\n" <<
+		"dy:               " 	<< to_string_with_precision(dy, 6) 			<< "\n" <<
+		"m_initial         " 	<< to_string_with_precision(m_initial, 6)	<< "\n";
 	
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Simulation
@@ -440,8 +485,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 						double v_advec = 0;
 						// Dot product with concentration gradient to get final advection term						
 						for(size_t d = 0; d < dims; d++){v_advec += v_here[d] * grad_u[d];}
-						g_dist.template get<CONC_NPLUS1>(key) = u+ D*dt*laplacian_u + dt*ksource_here 
-																- dt*ksink_here*u + dt*v_advec;
+						g_dist.template get<CONC_NPLUS1>(key) = u+ D*dt*laplacian_u + dt*ksource_here - dt*ksink_here*u + dt*v_advec;
 					}
 				}
 				++diff_dom_iter;
@@ -451,7 +495,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (growth_on){
-			if (phi_grad_tol_break > 50) {	
+			if (phi_grad_tol_break > 20) {	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
 				redist_options.max_iter                             = 1e4;
@@ -462,7 +506,7 @@ void yousefs_simulation(int experiment_n, json conditions)
 				redist_options.interval_check_convergence           = 1e3;
 				redist_options.width_NB_in_grid_points              = 10;
 				redist_options.print_current_iterChangeResidual     = false;
-				redist_options.print_steadyState_iter               = true;
+				redist_options.print_steadyState_iter               = false;
 				redist_options.save_temp_grid                       = false;
 				
 				// Redistancing
@@ -479,17 +523,9 @@ void yousefs_simulation(int experiment_n, json conditions)
 			{
 				auto key = phi_dom_iter.get();
 				
-				auto phi_mag = g_dist.template getProp<PHI_GRAD_MAGNITUDE>(key);
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v[0] * phi_mag;
-				
-				
-				/*
-				double dot_v_dphi = 0;
 				auto v_here = g_dist.template get<VELOCITY>(key);
-				auto grad_phi = g_dist.template getProp<PHI_GRAD>(key);
-				for(size_t d = 0; d < dims; d++){dot_v_dphi += v_here[d] * grad_phi[d];}
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * dot_v_dphi;
-				*/
+				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) 
+					+ dt * v_mag * g_dist.template get<PHI_GRAD_MAGNITUDE>(key);
 				
 				++phi_dom_iter;
 			}
@@ -512,6 +548,8 @@ void yousefs_simulation(int experiment_n, json conditions)
 		iter += 1;
 		t += dt;
 	}
+	double m_final = sum_prop_over_region<CONC_N, PHI_N>(g_dist, emb_boundary) * p_volume;
+	std::cout << "m_final:          " 	<< to_string_with_precision(m_final, 6) << std::endl;
 	file_out.close();
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// End simulation
