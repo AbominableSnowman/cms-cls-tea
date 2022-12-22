@@ -1,11 +1,13 @@
 #include <iostream>
 
 #include "util/PathsAndFiles.hpp"
-
 #include "level_set/redistancing_Sussman/AnalyticalSDF.hpp" // Analytical SDF to define the disk-shaped domain
 #include "level_set/redistancing_Sussman/HelpFunctionsForGrid.hpp"
+#include "level_set/redistancing_Sussman/RedistancingSussman.hpp" //for sussman redistancing
 
 #include "FiniteDifference/Upwind_gradient.hpp"
+
+#include "../include/timesteps_stability.hpp"
 
 
 // Grid dimensions
@@ -69,7 +71,7 @@ int main(int argc, char* argv[])
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Get timestep that fulfills the CFL condition
 	const double dx = g_dist.spacing(x), dy = g_dist.spacing(y); // if you want to know the grid spacing
-	const double dt = get_time_step_CFL(g_dist, v, 0.1);
+	const double dt = get_advection_time_step_cfl(g_dist, v, 0.1);
 	std::cout << "dx = " << dx << ", dy = " << dy << ", dt = " << dt << std::endl;
 	
 	
@@ -86,6 +88,7 @@ int main(int argc, char* argv[])
 	int iter = 0; // initial iteraton
 	int max_iter = 1e2; // max iteration --> be careful, that the box is large enough to contain the growing disk!
 	int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
+	// looping over time
 	while(iter < max_iter)
 	{
 		// Compute upwind gradient of phi for whole grid
@@ -94,7 +97,38 @@ int main(int argc, char* argv[])
 		get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
 		// Loop over grid and simulate growth using the surface normals (= magnitude gradient of phi) computed above
 		// This just runs over the whole box so far
+		
 		auto dom = g_dist.getDomainIterator();
+		auto key = dom.get();
+		auto phi_gra_mag = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom.get()); //get the magnitude of the phi gradient 
+		std::cout << "phi_gra_mag:" << phi_gra_mag << std::endl;
+
+		if (phi_gra_mag > 1.02)
+		{	
+			Redist_options<phi_type> redist_options;
+    		redist_options.min_iter                             = 1e3;
+    		redist_options.max_iter                             = 1e4;
+    
+    		redist_options.convTolChange.value                  = 1e-7;
+    		redist_options.convTolChange.check                  = true;
+    		redist_options.convTolResidual.value                = 1e-6; // is ignored if convTolResidual.check = false;
+    		redist_options.convTolResidual.check                = false;
+    
+    		redist_options.interval_check_convergence           = 1e3;
+    		redist_options.width_NB_in_grid_points              = 10;
+    		redist_options.print_current_iterChangeResidual     = true;
+    		redist_options.print_steadyState_iter               = true;
+    		redist_options.save_temp_grid                       = true;
+			
+			RedistancingSussman<grid_type, phi_type> redist_obj(g_dist, redist_options); //// Instantiation of Sussman-redistancing class
+			redist_obj.run_redistancing<PHI_N, PHI_N>(); //update phi_n using sussman redistancing
+			get_upwind_gradient<PHI_N, V_SIGN, PHI_GRAD>(g_dist, 1, true); //calculate new gradient and magnitude using new phi_n
+			get_vector_magnitude<PHI_GRAD, PHI_GRAD_MAGNITUDE, double>(g_dist);
+			auto phi_gra_mag_2 = g_dist.template get<PHI_GRAD_MAGNITUDE>(dom.get()); //get the magnitude of the phi gradient 
+			std::cout << "phi_gra_mag_2:" << phi_gra_mag_2 << std::endl;
+		} 
+		
+		// looping over the grid points 
 		while(dom.isNext())
 		{
 			auto key = dom.get();
@@ -116,10 +150,10 @@ int main(int argc, char* argv[])
 		// Update PHI_N
 		copy_gridTogrid<PHI_NPLUS1, PHI_N>(g_dist, g_dist);
 		
-		
-		
 		iter += 1;
 		t += dt;
+		
+
 	}
 	
 	/**

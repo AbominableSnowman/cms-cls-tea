@@ -24,7 +24,7 @@ int main(int argc, char* argv[])
 	// Most important controls
 	bool diffusion_on = true;
 	bool growth_on = true;
-	bool advection_on = false;
+	bool advection_on = true;
 	/*	
 		0: No sources or sinks; gaussian initial concentration field
 		1: Source on bottom, sink on top
@@ -45,7 +45,7 @@ int main(int argc, char* argv[])
 	// Other simulation values
 	
 	// Temporal values
-	double t_max = 10;
+	double t_max = 5;
 	//int max_iter = 1e3; // max iteration --> be careful, that the box is large enough to contain the growing disk!
 	//int interval_write = (int)(max_iter / 100); // set how many frames should be saved as vtk
 	
@@ -175,8 +175,8 @@ int main(int argc, char* argv[])
 		
 		// Velocity. Defined everywhere b/c of growing domain
 		if (growth_on || advection_on){
-			g_dist.template getProp<VELOCITY>(key)[0] = v[0]*g_dist.template getProp<PHI_GRAD>(key)[0];
-			g_dist.template getProp<VELOCITY>(key)[1] = v[1]*g_dist.template getProp<PHI_GRAD>(key)[1];
+			g_dist.template getProp<VELOCITY>(key)[0] = -v[0]*g_dist.template getProp<PHI_GRAD>(key)[0];
+			g_dist.template getProp<VELOCITY>(key)[1] = -v[1]*g_dist.template getProp<PHI_GRAD>(key)[1];
 		}
 		
 		
@@ -454,7 +454,7 @@ int main(int argc, char* argv[])
 		} // End diffusion
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 		if (growth_on){
-			if (phi_grad_tol_break > 50) {	
+			if (phi_grad_tol_break > 20) {	
 				Redist_options<phi_type> redist_options;
 				redist_options.min_iter                             = 1e3;
 				redist_options.max_iter                             = 1e4;
@@ -481,24 +481,9 @@ int main(int argc, char* argv[])
 			while(phi_dom_iter.isNext()) // looping over the grid points
 			{
 				auto key = phi_dom_iter.get();
-				
-				auto phi_mag = g_dist.template getProp<PHI_GRAD_MAGNITUDE>(key);
-				/*
-				
+
 				auto v_here = g_dist.template get<VELOCITY>(key);
-				
-				double v_mag = std::sqrt(v_here[0]*v_here[0] + v_here[1]*v_here[1]);
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v_mag * phi_mag;
-				
-				
-				
-				double dot_v_dphi = 0;
-				auto v_here = g_dist.template get<VELOCITY>(key);
-				auto grad_phi = g_dist.template getProp<PHI_GRAD>(key);
-				for(size_t d = 0; d < dims; d++){dot_v_dphi += v_here[d] * grad_phi[d];}
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * dot_v_dphi;
-				*/
-				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * v[0] * phi_mag;
+				g_dist.template get<PHI_NPLUS1>(key) = g_dist.template get<PHI_N>(key) + dt * std::sqrt(v_here[0]*v_here[0] + v_here[1]*v_here[1]);
 				
 				++phi_dom_iter;
 			}

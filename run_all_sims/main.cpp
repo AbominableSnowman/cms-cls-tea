@@ -25,7 +25,6 @@ void yousefs_simulation(int simulation_n, json conditions);
 int main(int argc, char* argv[])
 {
 	openfpm_init(&argc, &argv); // Initialize library.
-	//std::ifstream f("./sim_params/sim_tests_boundary_tests.json");
 	std::ifstream f("./sim_params/sim_tests.json");
 	json conditions = json::parse(f);
 	
@@ -52,7 +51,7 @@ void yousefs_simulation(int simulation_n, json conditions)
 {
 	int save_vtk = conditions[std::to_string(simulation_n)]["save_vtk"];
 	int save_csv = conditions[std::to_string(simulation_n)]["save_csv"];
-	int gaussian_ic = conditions[std::to_string(simulation_n)]["gaussian_ic"];
+	double gauss_factor = conditions[std::to_string(simulation_n)]["gaussian_ic"];
 	int diffusion_on = conditions[std::to_string(simulation_n)]["diffusion_on"];
 	int growth_on = conditions[std::to_string(simulation_n)]["growth_on"];
 	int advection_on = conditions[std::to_string(simulation_n)]["advection_on"];
@@ -88,9 +87,9 @@ void yousefs_simulation(int simulation_n, json conditions)
 	constexpr size_t x = 0, y = 1; // Space indices
 	size_t N = 64; // Grid length
 	const size_t sz[dims] = {N, N};
-	const double radius = 1.0;
+	const double radius = 0.75;
 	const double box_lower = 0.0;
-	const double box_upper = 4.0 * radius;
+	const double box_upper = 4.0;
 	const double center[dims] = {0.5*(box_upper+box_lower), 0.5*(box_upper+box_lower)};
 	
 	// Diffusion values
@@ -98,6 +97,7 @@ void yousefs_simulation(int simulation_n, json conditions)
 	//double k_sink   = 1;
 	double mu[dims]    = {box_upper/2.0, box_upper/2.0}; // For initial gaussian conc field
 	double sigma[dims] = {box_upper/10.0, box_upper/10.0}; // For initial gaussian conc field
+	double norm_factor[dims] = {gauss_factor, gauss_factor};
 	
 	// Signed distance function values
 	double emb_boundary = 0; // embryo boundary: where SDF ~= 0
@@ -212,8 +212,7 @@ void yousefs_simulation(int simulation_n, json conditions)
 		if (phi_here >= emb_boundary - phi_epsilon) {
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// Concentration initial conditions
-			if (gaussian_ic || source_sink_cond == 0){g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma);}
-			//g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma);
+			g_dist.template get<CONC_N>(key) = gaussian(coords, mu, sigma, norm_factor);
 			////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// Sources and sinks
 			if (source_sink_cond == 1){
@@ -327,6 +326,7 @@ void yousefs_simulation(int simulation_n, json conditions)
 		"diffusion," 							<< 
 		"growth," 								<< 
 		"advection," 							<<
+		"gaussian factor,"                      <<
 		"source_sink_condition," 				<<
 		"max_iter," 							<< 
 		"interval_write," 						<< 
@@ -345,16 +345,17 @@ void yousefs_simulation(int simulation_n, json conditions)
 		diffusion_on 							<< "," << 
 		growth_on 								<< "," << 
 		advection_on 							<< "," << 
+		gauss_factor 							<< "," << 
 		source_sink_cond 						<< "," <<
 		max_iter 								<< "," << 
 		interval_write 							<< "," << 
 		N 										<< "," <<
-		to_string_with_precision(D, 3) 			<< "," << 
+		to_string_with_precision(D, 6) 			<< "," << 
 		to_string_with_precision(k_source, 3) 	<< "," << 
 		to_string_with_precision(k_sink, 3) 	<< "," <<
-		to_string_with_precision(v_mag, 3) 		<< "," << 
-		to_string_with_precision(v[0], 3) 		<< "," << 
-		to_string_with_precision(v[1], 3) 		<< "," << 
+		to_string_with_precision(v_mag, 6) 		<< "," << 
+		to_string_with_precision(v[0], 6) 		<< "," << 
+		to_string_with_precision(v[1], 6) 		<< "," << 
 		to_string_with_precision(dt, 6) 		<< "," << 
 		to_string_with_precision(t_max, 6) 		<< "," << 
 		to_string_with_precision(dx, 6) 		<< "," << 
@@ -373,6 +374,7 @@ void yousefs_simulation(int simulation_n, json conditions)
 		"D:                " 	<< to_string_with_precision(D, 5) 			<< "\n" << 
 		"k_source:         " 	<< to_string_with_precision(k_source, 3) 	<< "\n" << 
 		"k_sink:           " 	<< to_string_with_precision(k_sink, 3) 		<< "\n" <<
+		"Gaussian factor : " 	<< to_string_with_precision(gauss_factor, 3)<< "\n" <<
 		"v_mag:            " 	<< to_string_with_precision(v_mag, 5) 		<< "\n" <<
 		"v_x:              " 	<< to_string_with_precision(v[0], 5) 		<< "\n" << 
 		"v_y:              " 	<< to_string_with_precision(v[1], 5) 		<< "\n" << 
